@@ -119,7 +119,7 @@ pub(crate) fn build(
     )
     .add_plugins(crate::fps_overlay::FpsOverlayPlugin)
     .add_plugins((
-        (crate::retail_render::RetailRenderPlugin, crate::rtx::RtxPlugin),
+        (crate::retail_render::RetailRenderPlugin, crate::rtx::RtxPlugin, crate::skater_light::SkaterLightPlugin),
         input::InputPlugin,
         PhysicsPlugin,
         crate::presentation::PresentationPlugin,

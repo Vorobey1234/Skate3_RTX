@@ -42,6 +42,7 @@ mod teleport_menu;
 mod render_capacity;
 mod retail_render;
 mod rtx;
+mod skater_light;
 mod retail_character;
 mod retail_exposure;
 mod retail_irradiance;
