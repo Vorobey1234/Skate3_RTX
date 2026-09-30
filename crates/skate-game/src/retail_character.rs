@@ -268,6 +268,11 @@ fn bind(
     native: Query<&crate::custom_models::NativeModelRoot>,
     imports: Query<(), With<crate::custom_models::CustomModelRoot>>,
 ) {
+    // RTX path: characters keep their authored StandardMaterial so they fill the
+    // G-buffer and receive path-traced light instead of the retail SH/sun model.
+    if crate::rtx::active() {
+        return;
+    }
     let Some(lighting) = lighting else {
         return;
     };

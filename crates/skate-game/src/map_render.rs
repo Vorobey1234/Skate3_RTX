@@ -183,6 +183,7 @@ impl PreparedScene {
             &mut self.world_materials,
             &mut self.images,
             &mut self.params,
+            &mut self.standard,
         );
         if let Some(sky) = sky {
             sky.spawn(

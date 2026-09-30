@@ -2,6 +2,7 @@ param([string]$TargetDirectory = (Join-Path (Split-Path $PSScriptRoot -Parent) '
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Ensure-WindowsSdk.ps1')
+. (Join-Path $PSScriptRoot 'Ensure-DlssSdk.ps1')
 . (Join-Path $PSScriptRoot 'PowerShellCompat.ps1')
 Push-Location $ProjectRoot
 try {
@@ -28,6 +29,7 @@ try {
     # Link this invocation directly into private staging; never copy a generic cache EXE.
     & cargo rustc --release --locked --target x86_64-pc-windows-msvc --target-dir $TargetDirectory -p skate-game --bin skate3rust --no-default-features -- -C extra-filename= --emit "link=$stage/skate3rust.exe" -C "link-arg=/PDB:$symbols/skate3rust.pdb"
     if ($LASTEXITCODE -ne 0) { throw 'Release compilation failed' }
+    Copy-DlssRuntime $stage | Out-Null
     & cargo build --release --locked --target x86_64-pc-windows-msvc --target-dir $TargetDirectory -p skate-steam-relay
     if ($LASTEXITCODE -ne 0) { throw 'Steam relay compilation failed' }
     & (Join-Path $PSScriptRoot 'Stage-SteamRelay.ps1') `

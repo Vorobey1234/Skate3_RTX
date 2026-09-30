@@ -374,6 +374,23 @@ impl Material for WorldMaterial {
         retail_shader("retail_depth.wgsl")
     }
 
+    // RTX path: opaque world geometry fills the G-buffer that Solari lights.
+    fn deferred_vertex_shader() -> ShaderRef {
+        retail_shader("rtx_world_gbuffer.wgsl")
+    }
+
+    fn deferred_fragment_shader() -> ShaderRef {
+        retail_shader("rtx_world_gbuffer.wgsl")
+    }
+
+    fn opaque_render_method(&self) -> bevy::pbr::OpaqueRendererMethod {
+        if crate::rtx::active() {
+            bevy::pbr::OpaqueRendererMethod::Deferred
+        } else {
+            bevy::pbr::OpaqueRendererMethod::Forward
+        }
+    }
+
     fn alpha_mode(&self) -> AlphaMode {
         self.class.alpha_mode()
     }
@@ -1412,6 +1429,7 @@ impl Plugin for RetailRenderPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "retail_world.wgsl");
         embedded_asset!(app, "retail_depth.wgsl");
+        embedded_asset!(app, "rtx_world_gbuffer.wgsl");
         embedded_asset!(app, "retail_sky.wgsl");
         bevy::shader::load_shader_library!(app, "retail_material_bindings.wgsl");
         app.init_resource::<FrameStateData>()

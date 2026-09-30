@@ -95,3 +95,21 @@ Upstream references reviewed September 6, 2026:
 When upgrading Bevy, reassess this patch and rerun the GPU test, stationary and
 moving-camera benchmarks, and visual comparison. Do not assume an unchanged
 private renderer implementation across engine versions.
+
+## Solari sky and light selection (RTX fork)
+
+`bevy_solari` is the unmodified crates.io 0.18.1 source, with its original MIT
+and Apache licenses, except for these changes:
+
+- `src/scene/raytracing_scene_bindings.wgsl`: adds `SKY_RADIANCE`, a uniform
+  clear-sky radiance in cd/m^2. Upstream treats a ray that leaves the scene as
+  black, which leaves outdoor shadows lit only by bounce light.
+- `src/realtime/restir_gi.wgsl`: an escaped diffuse GI ray becomes a sky sample
+  placed `SKY_SAMPLE_DISTANCE` along the ray and facing back, so temporal and
+  spatial reuse still validate it.
+- `src/realtime/world_cache_update.wgsl`: an escaped cache ray adds the sky. The
+  cache ray stops at 50 m, so a second ray confirms the escape first.
+- `src/realtime/specular_gi.wgsl`: an escaped glossy path adds the sky.
+- `src/scene/binder.rs`: skips directional lights with zero illuminance. Light
+  selection is uniform over sources, so the game's receiver-only shadow light
+  would otherwise waste half of the direct-light samples.

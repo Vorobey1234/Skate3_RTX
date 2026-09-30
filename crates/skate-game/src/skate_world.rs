@@ -76,6 +76,7 @@ pub(crate) fn spawn(
     materials: &mut impl AssetSink<WorldMaterial>,
     images: &mut impl AssetSink<Image>,
     buffers: &mut impl AssetSink<bevy::render::storage::ShaderStorageBuffer>,
+    standard: &mut impl AssetSink<StandardMaterial>,
 ) -> SceneStats {
     let _span = info_span!("spawn_world").entered();
     let table = MaterialTable::build(map, tuning, environment, materials, images, buffers);
@@ -133,7 +134,8 @@ pub(crate) fn spawn(
         }
     }
 
-    spawn_lights(map, commands);
+    crate::rtx::spawn_world_proxies(map, &table, commands, meshes, standard);
+    spawn_lights(map, commands, meshes, standard);
     eprintln!(
         "SKATE_RENDER_READY draws={} triangles={} slabs={} materials={} \
          opaque={} opaque_two_sided={} cutout={} cutout_two_sided={} \
@@ -267,10 +269,18 @@ fn tangent(v: &skate_data::skate_map::Vertex) -> [f32; 4] {
     [tangent.x, tangent.y, tangent.z, frame[3]]
 }
 
-fn spawn_lights(map: &SkateMap, commands: &mut SceneCommands) {
+fn spawn_lights(
+    map: &SkateMap,
+    commands: &mut SceneCommands,
+    meshes: &mut impl AssetSink<Mesh>,
+    standard: &mut impl AssetSink<StandardMaterial>,
+) {
     for light in &map.lights {
         let position = Vec3::from_array(light.position);
         let color = Color::srgb(light.color[0], light.color[1], light.color[2]);
+        if matches!(light.kind, 0 | 1) {
+            crate::rtx::spawn_light_proxy(commands, meshes, standard, position, color, light.intensity, light.radius);
+        }
         match light.kind {
             0 => commands.spawn((
                 PointLight {

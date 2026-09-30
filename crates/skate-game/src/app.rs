@@ -58,6 +58,7 @@ pub(crate) fn build(
 ) -> App {
     let retail_scene = config.map.as_ref().is_some_and(|map| crate::retail_render::RetailScene::for_map(map));
     let mut app = App::new();
+    crate::rtx::insert_project_id(&mut app);
     crate::custom_models::register_source(&mut app);
     crate::modding::register_source(&mut app);
     app.add_plugins(
@@ -118,7 +119,7 @@ pub(crate) fn build(
     )
     .add_plugins(crate::fps_overlay::FpsOverlayPlugin)
     .add_plugins((
-        crate::retail_render::RetailRenderPlugin,
+        (crate::retail_render::RetailRenderPlugin, crate::rtx::RtxPlugin),
         input::InputPlugin,
         PhysicsPlugin,
         crate::presentation::PresentationPlugin,

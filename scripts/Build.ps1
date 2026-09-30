@@ -11,6 +11,7 @@ $ErrorActionPreference = 'Stop'
 $sw = [Diagnostics.Stopwatch]::StartNew()
 Push-Location $ProjectRoot
 try {
+    . (Join-Path $PSScriptRoot 'Ensure-DlssSdk.ps1')
     if (-not $StageOnly) {
         $packages = @('-p', 'skate-game')
         if ($WithRelay) { $packages += @('-p', 'skate-steam-relay') }
@@ -78,6 +79,9 @@ try {
                 }
             }
         }
+    }
+    foreach ($name in (Copy-DlssRuntime $binDirectory)) {
+        $staged += @{name = $name; sha256 = (Get-StagedHash (Join-Path $binDirectory $name))}
     }
     if ($WithRelay -or (Test-Path -LiteralPath (Join-Path $binDirectory 'steam-relay/skate-steam-relay.exe'))) {
         if ($WithRelay) {

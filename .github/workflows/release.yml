@@ -40,6 +40,13 @@ jobs:
         run: python tools/mixamo_to_skate/check_package.py --transaction-only
       - name: Check isolated asset refresh and failure recovery
         run: python -m unittest tools.asset_pipeline.test_versions -v
+      # RTX build: dlss_wgpu only needs the Vulkan headers from the SDK. The DLSS
+      # SDK itself is fetched by scripts/Ensure-DlssSdk.ps1; LLVM is on the image.
+      - name: Fetch Vulkan headers
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Headers "$env:RUNNER_TEMP/vulkan"
+          "VULKAN_SDK=$env:RUNNER_TEMP/vulkan" >> $env:GITHUB_ENV
       - name: Build Windows package
         shell: pwsh
         env:

@@ -8,6 +8,51 @@ A Rust and Bevy skating project built from Skate 3 reverse-engineering research.
 Includes skating, tricks, grinds, offboard movement, difficulty settings and
 `.skate` map support. Gameplay parity is still a work in progress.
 
+## RTX fork
+
+This fork replaces the lighting of the retail renderer with real-time path
+tracing, built on Bevy Solari and NVIDIA DLSS:
+
+- **G-buffer instead of lightmaps.** Opaque world geometry writes albedo,
+  shading normal, roughness and emission to a deferred G-buffer
+  (`crates/skate-game/src/rtx_world_gbuffer.wgsl`). Baked lightmaps, shadow maps
+  and the fixed sun term are no longer used for opaque surfaces.
+- **Ray-traced direct light.** ReSTIR DI samples the scene sun, emissive world
+  materials (signs and lamps) and the map's point and spot lights. Shadows are
+  traced rays.
+- **Ray-traced indirect light.** ReSTIR GI with a world radiance cache handles
+  multi-bounce diffuse light. Glossy reflections are traced paths. Rays that
+  leave the scene see a clear sky, added by a small patch in `vendor/bevy_solari`.
+- **DLSS Ray Reconstruction.** DLSS RR denoises the path-traced signal and
+  upscales it to the output resolution in a single pass.
+- **Characters** keep their authored PBR materials. Each frame they are skinned
+  on the CPU into a ray-tracing proxy, so they cast traced shadows and appear in
+  reflections.
+
+The ray-traced scene is in `crates/skate-game/src/rtx.rs`. GPUs without hardware
+ray queries fall back to the original raster renderer. Set `SKATE_RTX=0` to
+force that fallback.
+
+**Frame generation is not included.** DLSS Frame Generation requires NVIDIA
+Streamline to take over the swapchain, and the Bevy/wgpu DLSS integration
+(`dlss_wgpu`) supports only Super Resolution and Ray Reconstruction. On RTX 40
+and 50 series GPUs, driver-level frame generation (NVIDIA Smooth Motion in the
+NVIDIA App) can be used instead, where the driver supports it for this game.
+
+Known limits: cutout and alpha-blended materials (foliage, fences, water) are
+not in the ray-traced scene, so they cast no traced shadows. Blended surfaces
+still use their baked lighting. Secondary hits use each material's average
+albedo, not its texture.
+
+### RTX build requirements
+
+In addition to the requirements under **Build**: an NVIDIA RTX GPU, the
+[LunarG Vulkan SDK](https://vulkan.lunarg.com/) (`VULKAN_SDK` set) and LLVM
+(for `libclang`). `BUILD.bat` downloads the
+[NVIDIA DLSS SDK v310.4.0](https://github.com/NVIDIA/DLSS/tree/v310.4.0) (the version `dlss_wgpu` 2.0 binds) into `.local/DLSS` unless
+`DLSS_SDK` is already set, and copies `nvngx_dlss.dll` and `nvngx_dlssd.dll`
+beside the executable. Their use is subject to the NVIDIA DLSS SDK license.
+
 ## Play
 
 [Download Experimental](https://github.com/SK8-ENGINE/skate-3-rust-engine/releases/tag/experimental).

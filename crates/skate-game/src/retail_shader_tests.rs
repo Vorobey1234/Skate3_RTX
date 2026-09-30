@@ -50,7 +50,7 @@ fn validate(source: &str, extras: &[&str]) -> naga::Module {
         (
             "frame",
             "#define_import_path bevy_pbr::mesh_view_bindings\n\
-             struct View {view_from_world:mat4x4<f32>,clip_from_world:mat4x4<f32>,viewport:vec4<f32>,world_position:vec3<f32>,padding:f32}\n\
+             struct View {view_from_world:mat4x4<f32>,clip_from_world:mat4x4<f32>,unjittered_clip_from_world:mat4x4<f32>,viewport:vec4<f32>,world_position:vec3<f32>,padding:f32}\n\
              struct Light {flags:u32}\n\
              struct Lights {n_directional_lights:u32,directional_lights:array<Light,10>}\n\
              @group(0) @binding(0) var<uniform> view:View;\n\
@@ -81,7 +81,32 @@ fn validate(source: &str, extras: &[&str]) -> naga::Module {
              fn get_world_from_local(i:u32)->mat4x4<f32> {return mat4x4<f32>();}\n\
              fn mesh_position_local_to_world(m:mat4x4<f32>,p:vec4<f32>)->vec4<f32> {return m*p;}\n\
              fn mesh_normal_local_to_world(n:vec3<f32>,i:u32)->vec3<f32> {return n;}\n\
+             fn get_previous_world_from_local(i:u32)->mat4x4<f32> {return mat4x4<f32>();}
              fn mesh_tangent_local_to_world(m:mat4x4<f32>,t:vec4<f32>,i:u32)->vec4<f32> {return t;}"
+                .to_string(),
+        ),
+        (
+            "prepass_bindings",
+            "#define_import_path bevy_pbr::prepass_bindings
+             struct PreviousViewUniforms {view_from_world:mat4x4<f32>,clip_from_world:mat4x4<f32>}
+             @group(0) @binding(2) var<uniform> previous_view_uniforms:PreviousViewUniforms;"
+                .to_string(),
+        ),
+        (
+            "rgb9e5",
+            include_str!("../../../vendor/bevy_pbr/src/render/rgb9e5.wgsl").to_string(),
+        ),
+        (
+            "deferred_types",
+            "#define_import_path bevy_pbr::pbr_deferred_types
+             fn pack_unorm4x8_(v:vec4<f32>)->u32 {return pack4x8unorm(v);}
+             fn pack_24bit_normal_and_flags(n:vec2<f32>,f:u32)->u32 {return pack2x16unorm(n);}"
+                .to_string(),
+        ),
+        (
+            "utils",
+            "#define_import_path bevy_pbr::utils
+             fn octahedral_encode(v:vec3<f32>)->vec2<f32> {return v.xy;}"
                 .to_string(),
         ),
         (
@@ -132,6 +157,23 @@ fn world_shader_validates_under_non_uniform_material_slots() {
 /// The dome is one draw with no material table, so what is worth checking is the
 /// binding numbers: they are written out by hand here and have to stay in step
 /// with `SkyMaterial`'s `AsBindGroup` derive.
+/// The RTX G-buffer pass shares the world vertex layout and the same
+/// non-uniform material slots, in every prepass configuration it is built for.
+#[test]
+fn rtx_gbuffer_shader_validates() {
+    for extras in [
+        &["PREPASS_FRAGMENT", "DEFERRED_PREPASS", "MOTION_VECTOR_PREPASS"][..],
+        &["PREPASS_FRAGMENT", "DEFERRED_PREPASS", "MOTION_VECTOR_PREPASS", "WORLD_ALPHA_CUTOFF"],
+        &["PREPASS_FRAGMENT", "DEFERRED_PREPASS", "NORMAL_PREPASS"],
+    ] {
+        let module = validate(include_str!("rtx_world_gbuffer.wgsl"), extras);
+        assert_eq!(
+            vertex_locations(&module),
+            vertex_locations(&validate(include_str!("retail_world.wgsl"), &[]))
+        );
+    }
+}
+
 #[test]
 fn sky_shader_validates() {
     validate(include_str!("retail_sky.wgsl"), &[]);
