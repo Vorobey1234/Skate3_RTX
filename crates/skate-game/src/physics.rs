@@ -300,7 +300,11 @@ impl GamePhysics {
             BoardMotion::Active,
         );
         let world = match map {
-            Some(map) => crate::skate_world::collision_world(map, settings.floor_material)?,
+            Some(map) => crate::skate_world::collision_world(
+                map,
+                crate::skate_world::load_props(asset_root, map).as_ref(),
+                settings.floor_material,
+            )?,
             None => terrain.world(settings.floor_material),
         };
         let grind_world = std::sync::Arc::new(if map.is_none() && terrain == ground::Terrain::Course {

@@ -430,6 +430,7 @@ fn retail_archive(map: &SkateMap) -> Result<Option<&[u8]>, String> {
 
 fn retail_collision_world(
     archive: &[u8],
+    props: Option<&SkateMap>,
     material: RetailContactMaterial,
 ) -> Result<BoardWorld, String> {
     let mut triangles = Vec::new();
@@ -489,8 +490,9 @@ fn retail_collision_world(
         }
         Ok(())
     })?;
+    let prop_triangles = props.map_or(0, |props| append_prop_collision(props, material, &mut triangles, &mut packed_surfaces, &mut meshes));
     eprintln!(
-        "SKATE_RWCM_READY triangles={count} query_clusters={} source=embedded",
+        "SKATE_RWCM_READY triangles={count} query_clusters={} prop_triangles={prop_triangles} source=embedded",
         meshes.len()
     );
     BoardWorld::with_query_metadata(
@@ -505,12 +507,67 @@ fn retail_collision_world(
     .map_err(str::to_owned)
 }
 
+/// Movable props that setup exports per retail map as world-space render
+/// geometry (`private/native-props/<map>.skate`). Absent for other maps.
+pub(crate) fn load_props(asset_root: &std::path::Path, map: &SkateMap) -> Option<SkateMap> {
+    let path = asset_root.join("private/native-props").join(format!("{}.skate", map.name));
+    match std::fs::read(&path).map_err(|e| e.to_string()).and_then(|b| SkateMap::parse_render_only(&b)) {
+        Ok(props) => Some(props),
+        Err(error) => {
+            info!("No movable props for {}: {error}", map.name);
+            None
+        }
+    }
+}
+
+/// Static collision for props, from their render triangles: the export has no
+/// collision volumes, and the retail props are simulated objects this port does
+/// not run. Triangles are two-sided with no edge data (the defaults native
+/// volumes without edges use) and surface 0, in clusters of 64 so the query
+/// BVH can reject distant ones. Degenerate render triangles are skipped.
+fn append_prop_collision(
+    props: &SkateMap,
+    material: RetailContactMaterial,
+    triangles: &mut Vec<WorldTriangle>,
+    packed_surfaces: &mut Vec<u16>,
+    meshes: &mut Vec<QueryMesh>,
+) -> usize {
+    let first = triangles.len();
+    for tri in props.geometry.indices.chunks_exact(3) {
+        let points = [tri[0], tri[1], tri[2]].map(|i| {
+            let p = props.geometry.vertices[i as usize].position;
+            Vector3::new(p[0], p[1], p[2])
+        });
+        if let Some(triangle) = WorldTriangle::from_vertices(points, material, 0, 0x1e1, [-1.; 3], 0.) {
+            triangles.push(triangle);
+            packed_surfaces.push(0);
+        }
+    }
+    for start in (first..triangles.len()).step_by(64) {
+        let end = (start + 64).min(triangles.len());
+        let Some(bounds) = Bounds::from_points(triangles[start..end].iter().flat_map(|t| t.triangle.vertices)) else {
+            continue;
+        };
+        meshes.push(QueryMesh {
+            geometry: 0, rejection_flags: 0,
+            triangle_range: start..end,
+            local_to_world: RetailAffineTransform::IDENTITY,
+            world_to_local: RetailAffineTransform::IDENTITY,
+            local_bounds: bounds,
+            matching_group: -1,
+            pool: QueryPool::Ground,
+        });
+    }
+    triangles.len() - first
+}
+
 pub(crate) fn collision_world(
     map: &SkateMap,
+    props: Option<&SkateMap>,
     material: RetailContactMaterial,
 ) -> Result<BoardWorld, String> {
     if let Some(archive) = retail_archive(map)? {
-        return retail_collision_world(archive, material);
+        return retail_collision_world(archive, props, material);
     }
     // Match the reference RW mesh compiler's 1 mm vertex welding and reversed
     // edge pairing. Triangle diagonals are adjacency, never authored ledges.

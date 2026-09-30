@@ -186,26 +186,22 @@ impl PreparedScene {
             &mut self.standard,
         );
         // Movable props (bins, benches, barriers) that setup exports per map as
-        // world-space render geometry. They have no collision data, so they are
-        // drawn but the skater passes through them.
-        if self.retail {
-            let props = asset_root.join("private/native-props").join(format!("{}.skate", map.name));
-            match std::fs::read(&props).map_err(|e| e.to_string()).and_then(|b| SkateMap::parse_render_only(&b)) {
-                Ok(props) => {
-                    crate::skate_world::spawn(
-                        &props,
-                        &tuning,
-                        &environment,
-                        &mut self.commands,
-                        &mut self.meshes,
-                        &mut self.world_materials,
-                        &mut self.images,
-                        &mut self.params,
-                        &mut self.standard,
-                    );
-                }
-                Err(error) => info!("No movable props for {}: {error}", map.name),
-            }
+        // world-space render geometry. Physics loads the same file for their
+        // static collision (`skate_world::collision_world`).
+        if self.retail
+            && let Some(props) = crate::skate_world::load_props(asset_root, map)
+        {
+            crate::skate_world::spawn(
+                &props,
+                &tuning,
+                &environment,
+                &mut self.commands,
+                &mut self.meshes,
+                &mut self.world_materials,
+                &mut self.images,
+                &mut self.params,
+                &mut self.standard,
+            );
         }
         if self.retail {
             crate::rtx::spawn_sea(map, &mut self.commands, &mut self.meshes, &mut self.standard);

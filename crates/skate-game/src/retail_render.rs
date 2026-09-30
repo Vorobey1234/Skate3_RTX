@@ -1016,11 +1016,11 @@ impl Request {
         let cutout = material.alpha_mode == 1;
         // Under RTX, DLSS Ray Reconstruction rebuilds every pixel from the
         // G-buffer and drops whatever a forward pass blended over it, so glass,
-        // decals and water edges vanished. Glass (family 13) is written to the
-        // G-buffer as a glossy surface instead, and other blended surfaces are
-        // alpha-tested there.
+        // decals and water edges vanished. Blended surfaces are alpha-tested in
+        // the G-buffer instead; glass (family 13) uses a dithered test that
+        // Ray Reconstruction resolves back into partial coverage.
         let (blended, cutout) = if crate::rtx::active() && blended {
-            (false, definition.family != 13)
+            (false, true)
         } else {
             (blended, cutout)
         };

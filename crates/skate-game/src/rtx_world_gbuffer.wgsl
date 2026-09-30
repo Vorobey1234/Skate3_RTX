@@ -200,10 +200,8 @@ fn fragment(i: VertexOutput) -> FragmentOutput {
     } else if fam == 14u {
         perceptual_roughness = 0.08;
     } else if fam == 13u {
-        // Glass: the retail tint (diffuse scaled by its alpha, as the retail
-        // shader lights it) under a smooth dielectric coat. It is opaque here;
-        // rays still pass through, since glass has no ray-tracing proxy.
-        albedo *= a.a;
+        // Glass: the retail tint under a smooth dielectric coat. Coverage is
+        // dithered below; rays pass through, since glass has no proxy.
         perceptual_roughness = 0.05;
         reflectance = 0.5;
     }
@@ -216,7 +214,14 @@ fn fragment(i: VertexOutput) -> FragmentOutput {
 
     // After every derivative, as in the retail shader.
 #ifdef WORLD_ALPHA_CUTOFF
-    if a.a < p.mode.z { discard; }
+    if fam == 13u {
+        // Retail glass blends with alpha a^2. A G-buffer holds one surface per
+        // pixel, so keep that fraction of pixels in a fixed 4x4 Bayer pattern;
+        // Ray Reconstruction averages it into see-through glass.
+        let q = vec2<u32>(i.clip_position.xy) & vec2<u32>(3u);
+        var bayer = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+        if a.a * a.a <= (bayer[q.y * 4u + q.x] + 0.5) / 16.0 { discard; }
+    } else if a.a < p.mode.z { discard; }
 #endif
 
     var out: FragmentOutput;

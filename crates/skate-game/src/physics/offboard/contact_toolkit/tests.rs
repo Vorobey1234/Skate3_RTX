@@ -163,6 +163,7 @@ fn embedded_static_rwcm_hits_distinct_actor_query_ids() {
     });
     let world = crate::skate_world::collision_world(
         &map,
+        None,
         RetailContactMaterial {
             static_friction: 0.,
             dynamic_friction: 0.,
