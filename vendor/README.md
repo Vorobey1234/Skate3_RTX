@@ -150,3 +150,12 @@ and Apache licenses, except for these changes:
 - `bevy_pbr/src/atmosphere/node.rs`: the sky pass no longer applies
   `MainPassResolutionOverride` to its viewport, since after DLSS it draws the
   full output-resolution target.
+
+## DLSS Ray Reconstruction preset (RTX fork)
+
+`dlss_wgpu` is the unmodified crates.io 2.0.0 source, with its original
+MIT/Apache-2.0 license files. `src/ray_reconstruction.rs` sets the Ray
+Reconstruction render preset hint to F ("RR2", the newest model in DLSS
+310.9.1) for every quality mode before creating the feature. The crate still
+compiles against the 310.4.0 SDK headers, where preset F is not yet named;
+runtimes older than 310.9 fall back to their default model.

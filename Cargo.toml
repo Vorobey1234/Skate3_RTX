@@ -28,3 +28,4 @@ opt-level = 3
 bevy_pbr = { path = "vendor/bevy_pbr" }
 bevy_core_pipeline = { path = "vendor/bevy_core_pipeline" }
 bevy_solari = { path = "vendor/bevy_solari" }
+dlss_wgpu = { path = "vendor/dlss_wgpu" }

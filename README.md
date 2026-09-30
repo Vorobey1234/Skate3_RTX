@@ -24,7 +24,8 @@ tracing, built on Bevy Solari and NVIDIA DLSS:
   multi-bounce diffuse light. Glossy reflections are traced paths. Rays that
   leave the scene see a clear sky, added by a small patch in `vendor/bevy_solari`.
 - **DLSS Ray Reconstruction.** DLSS RR denoises the path-traced signal and
-  upscales it to the output resolution in a single pass.
+  upscales it to the output resolution in a single pass, using the newest
+  model (preset F, "RR2", from the DLSS 310.9.1 runtime).
 - **Time of day.** Escape > Graphics > Day & night sets the hour and cycle
   speed. A sun and moon follow it, the sky is Bevy's physical atmosphere (blue
   noon, orange sunset, moonlit night), and exposure adapts. Output uses Bevy's
@@ -34,10 +35,14 @@ tracing, built on Bevy Solari and NVIDIA DLSS:
   flat, smooth surfaces pick up glossy traced reflections.
 - **DLSS settings.** Escape > Graphics > DLSS: Auto, DLAA, Quality, Balanced,
   Performance, Ultra Performance, or Off (undenoised path tracing).
+- **Textured, alpha-tested ray tracing.** Reflections and bounce light see a
+  small copy of each surface's texture, and foliage and fences cast shadows
+  through their holes (Escape > Graphics > Foliage shadows turns this off).
 - **Props and sea.** Each map's movable props (bins, benches, parked vehicles)
-  exported by setup are drawn and ray traced; they have no collision yet. The
-  converted maps contain no sea surface, so a glossy water plane is added at
-  sea level (`SKATE_SEA_LEVEL` overrides the default of -3 m).
+  exported by setup are drawn, ray traced and solid (static collision from
+  their render triangles). The converted maps contain no sea surface, so a
+  glossy water plane is added 1 m below the map's lowest point
+  (`SKATE_SEA_LEVEL` overrides it).
 - **Characters** keep their authored PBR materials. Each frame they are skinned
   on the CPU into a ray-tracing proxy, so they cast traced shadows and appear in
   reflections.
@@ -63,8 +68,11 @@ In addition to the requirements under **Build**: an NVIDIA RTX GPU, the
 [LunarG Vulkan SDK](https://vulkan.lunarg.com/) (`VULKAN_SDK` set) and LLVM
 (for `libclang`). `BUILD.bat` downloads the
 [NVIDIA DLSS SDK v310.4.0](https://github.com/NVIDIA/DLSS/tree/v310.4.0) (the version `dlss_wgpu` 2.0 binds) into `.local/DLSS` unless
-`DLSS_SDK` is already set, and copies `nvngx_dlss.dll` and `nvngx_dlssd.dll`
-beside the executable. Their use is subject to the NVIDIA DLSS SDK license.
+`DLSS_SDK` is already set. It also downloads the v310.9.1 runtime into
+`.local/DLSS-runtime` unless `DLSS_RUNTIME` is set, and copies its
+`nvngx_dlss.dll` and `nvngx_dlssd.dll` beside the executable: newer runtimes
+keep the 310.4 interface and add the models the game requests. Their use is
+subject to the NVIDIA DLSS SDK license.
 
 ## Play
 
