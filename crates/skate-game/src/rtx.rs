@@ -430,13 +430,15 @@ fn any_tangent(normal: Vec3) -> [f32; 4] {
 
 /// The converted maps contain no sea or river surface: past the shoreline the
 /// original renderer shows the clear colour, and the atmosphere's ground under
-/// RTX. A flat, dark, glossy plane at sea level stands in, lit and reflected by
-/// the path tracer like any other surface. Level is read from `SKATE_SEA_LEVEL`
-/// for tuning, else `DEFAULT_SEA_LEVEL`.
-const DEFAULT_SEA_LEVEL: f32 = -3.0;
+/// RTX. A flat, dark, glossy plane stands in, lit and reflected by the path
+/// tracer like any other surface. It sits `SEA_CLEARANCE` below the map's
+/// lowest vertex, so it can never flood or z-fight authored ground; a fixed
+/// level did both on low-lying maps. `SKATE_SEA_LEVEL` overrides the level.
+const SEA_CLEARANCE: f32 = 1.0;
 const SEA_HALF_EXTENT: f32 = 8_000.0;
 
 pub(crate) fn spawn_sea(
+    map: &SkateMap,
     commands: &mut SceneCommands,
     meshes: &mut impl AssetSink<Mesh>,
     materials: &mut impl AssetSink<StandardMaterial>,
@@ -444,7 +446,12 @@ pub(crate) fn spawn_sea(
     if !active() {
         return;
     }
-    let level = std::env::var("SKATE_SEA_LEVEL").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_SEA_LEVEL);
+    let lowest = map.geometry.vertices.iter().map(|v| v.position[1]).fold(f32::INFINITY, f32::min);
+    if !lowest.is_finite() {
+        return;
+    }
+    let level = std::env::var("SKATE_SEA_LEVEL").ok().and_then(|v| v.parse().ok()).unwrap_or(lowest - SEA_CLEARANCE);
+    info!("SKATE_RTX: sea level {level}");
     let plane = Plane3d::new(Vec3::Y, Vec2::splat(SEA_HALF_EXTENT)).mesh().build();
     let Some(mut mesh) = standard_to_proxy(&plane) else { return };
     mesh.asset_usage = RenderAssetUsages::default();

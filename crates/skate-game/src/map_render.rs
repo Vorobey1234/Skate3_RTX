@@ -208,7 +208,7 @@ impl PreparedScene {
             }
         }
         if self.retail {
-            crate::rtx::spawn_sea(&mut self.commands, &mut self.meshes, &mut self.standard);
+            crate::rtx::spawn_sea(map, &mut self.commands, &mut self.meshes, &mut self.standard);
         }
         if let Some(sky) = sky {
             sky.spawn(
