@@ -35,6 +35,8 @@ const BUMP_STRENGTH: f32 = 3.0;
 const ROUGHNESS_BASE: f32 = 0.5;
 const ROUGHNESS_FROM_SLOPE: f32 = 4.0;
 const ROUGHNESS_MAX: f32 = 0.85;
+// Water body colour relative to the retail bed texture.
+const WATER_ALBEDO: f32 = 0.08;
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -94,9 +96,16 @@ fn fragment(i: VertexOutput) -> FragmentOutput {
         diffuse_uv += fract(bindings::frame_state().clock.x * p.water[1].xy * vec2<f32>(1.0, -1.0));
     }
     let a = bindings::sample_diffuse(slot, diffuse_uv, g);
+    // Neighbour taps one pixel footprint away, never less than a texel. A fixed
+    // one-texel step is sub-texel at a coarse mip, where DLSS's per-frame
+    // jitter turns it into a different slope every frame: distant surfaces
+    // shimmered. `bump_fade` rescales the slope to per-texel units, so the bump
+    // fades out with distance instead.
     let texel = 1.0 / vec2<f32>(bindings::page_dimensions(bindings::slots[slot].diffuse));
-    let a_u = bindings::sample_diffuse(slot, diffuse_uv + vec2<f32>(texel.x, 0.0), g);
-    let a_v = bindings::sample_diffuse(slot, diffuse_uv + vec2<f32>(0.0, texel.y), g);
+    let step = max(texel, max(abs(g.ddx), abs(g.ddy)));
+    let bump_fade = texel / step;
+    let a_u = bindings::sample_diffuse(slot, diffuse_uv + vec2<f32>(step.x, 0.0), g);
+    let a_v = bindings::sample_diffuse(slot, diffuse_uv + vec2<f32>(0.0, step.y), g);
     var nm = vec3<f32>(0.5, 0.5, 1.0);
     var detail = vec2<f32>(0.5);
     var overlay = vec3<f32>(0.5);
@@ -142,10 +151,29 @@ fn fragment(i: VertexOutput) -> FragmentOutput {
     let luma = vec3<f32>(0.2126, 0.7152, 0.0722);
     let h = dot(a.rgb, luma);
     // Texture rows are V-flipped against `kb`, which follows the authored V.
-    let slope = vec2<f32>(dot(a_u.rgb, luma) - h, -(dot(a_v.rgb, luma) - h));
+    let slope = vec2<f32>(dot(a_u.rgb, luma) - h, -(dot(a_v.rgb, luma) - h)) * bump_fade;
     let derived = (flags & 1u) == 0u && !(fam == 14u || fam >= 30u || fam == 11u || fam == 12u);
     if derived {
         wn = normalize(wn - BUMP_STRENGTH * (slope.x * kt + slope.y * kb));
+    }
+    // Retail flowing water (families 30 and 33): two normal-map layers scrolling
+    // at authored rates, combined as in `retail_world.wgsl`. Skipped when the
+    // tuning table is missing, which leaves the scroll scales at zero.
+    if (fam == 30u || fam == 33u) && dot(p.water[2], p.water[2]) > 0.0 {
+        let t = bindings::frame_state().clock.x;
+        let raw_uv = vec2<f32>(i.uv.x, 1.0 - i.uv.y);
+        let uv_scale = select(1.0, p.water[3].x, fam == 33u);
+        let s1 = p.water[2].xy * uv_scale;
+        let s2 = p.water[2].zw * uv_scale;
+        let uv1 = raw_uv * s1 + p.water[1].xy * t;
+        let uv2 = raw_uv * s2 + p.water[1].zw * t;
+        let n1 = bindings::sample_normal_map(slot, vec2<f32>(uv1.x, 1.0 - uv1.y), bindings::Gradients(g.ddx * s1, g.ddy * s1));
+        let n2 = bindings::sample_normal_map(slot, vec2<f32>(uv2.x, 1.0 - uv2.y), bindings::Gradients(g.ddx * s2, g.ddy * s2));
+        let vn = (2.0 * n1.rgb + 2.0 * n2.rgb - 2.0) * p.water[0].xzw;
+        if dot(vn, vn) > 1e-8 {
+            let v = normalize(vn);
+            wn = normalize(v.x * kt + v.y * kb + v.z * wn);
+        }
     }
 
     // Retail Blinn-Phong gloss -> GGX. Exponent n maps to alpha = sqrt(2/(n+2)).
@@ -162,8 +190,16 @@ fn fragment(i: VertexOutput) -> FragmentOutput {
     if (fam == 5u || fam == 6u || fam == 13u) && (flags & 64u) != 0u {
         perceptual_roughness = mix(perceptual_roughness, 0.1, masks.z);
     }
-    let water = fam == 14u || fam >= 30u;
-    if water { perceptual_roughness = 0.08; reflectance = 0.5; }
+    // Water: nearly black body with a smooth dielectric surface (F0 0.02), so
+    // what shows is path-traced reflection of sky and surroundings through the
+    // animated normals above, rather than the flat retail bed texture.
+    if fam >= 30u {
+        albedo *= WATER_ALBEDO;
+        perceptual_roughness = 0.04;
+        reflectance = 0.35;
+    } else if fam == 14u {
+        perceptual_roughness = 0.08;
+    }
 
     var emissive = vec3<f32>(0.0);
     if fam == 11u || fam == 12u {

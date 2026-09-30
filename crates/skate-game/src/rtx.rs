@@ -59,6 +59,8 @@ const MOON_LUX: f32 = 30.0;
 /// Camera EV100 at full day and at night.
 const DAY_EV100: f32 = 9.7;
 const NIGHT_EV100: f32 = 4.5;
+/// Ambient cd/m^2 per lux of sun and moon; see `day_cycle`.
+const AMBIENT_PER_LUX: f32 = 0.04;
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -192,6 +194,7 @@ fn day_cycle(
     mut others: Query<&mut DirectionalLight, Without<Celestial>>,
     mut cameras: Query<&mut Exposure, With<crate::camera::GameplayCamera>>,
     mut domes: Query<&mut Visibility, With<MeshMaterial3d<crate::retail_sky::SkyMaterial>>>,
+    mut ambient: ResMut<GlobalAmbientLight>,
 ) {
     if celestial.is_empty() {
         for moon in [false, true] {
@@ -226,6 +229,12 @@ fn day_cycle(
             light.illuminance = 0.;
         }
     }
+    // Forward-drawn surfaces (hair, glass) miss path-traced sky light and get
+    // Bevy's ambient term instead. Follow the sky, at about half strength
+    // because ambient ignores occlusion; a fixed value is blinding at night
+    // exposure.
+    let lux: f32 = celestial.iter().map(|(_, light, _)| light.illuminance).sum();
+    ambient.brightness = AMBIENT_PER_LUX * lux + 0.05;
     let day = smoothstep(-0.1, 0.15, sun.y);
     for mut exposure in &mut cameras {
         exposure.ev100 = NIGHT_EV100 + (DAY_EV100 - NIGHT_EV100) * day;
@@ -407,6 +416,45 @@ fn proxy_mesh(indices: &[u32], vertex: impl Fn(u32) -> ([f32; 3], [f32; 3], [f32
 fn any_tangent(normal: Vec3) -> [f32; 4] {
     let normal = normal.try_normalize().unwrap_or(Vec3::Y);
     normal.any_orthonormal_vector().extend(1.).to_array()
+}
+
+// ---------------------------------------------------------------------------
+// Sea
+// ---------------------------------------------------------------------------
+
+/// The converted maps contain no sea or river surface: past the shoreline the
+/// original renderer shows the clear colour, and the atmosphere's ground under
+/// RTX. A flat, dark, glossy plane at sea level stands in, lit and reflected by
+/// the path tracer like any other surface. Level is read from `SKATE_SEA_LEVEL`
+/// for tuning, else `DEFAULT_SEA_LEVEL`.
+const DEFAULT_SEA_LEVEL: f32 = -3.0;
+const SEA_HALF_EXTENT: f32 = 8_000.0;
+
+pub(crate) fn spawn_sea(
+    commands: &mut SceneCommands,
+    meshes: &mut impl AssetSink<Mesh>,
+    materials: &mut impl AssetSink<StandardMaterial>,
+) {
+    if !active() {
+        return;
+    }
+    let level = std::env::var("SKATE_SEA_LEVEL").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_SEA_LEVEL);
+    let plane = Plane3d::new(Vec3::Y, Vec2::splat(SEA_HALF_EXTENT)).mesh().build();
+    let Some(mut mesh) = standard_to_proxy(&plane) else { return };
+    mesh.asset_usage = RenderAssetUsages::default();
+    let mesh = meshes.add(mesh);
+    commands.spawn((
+        Name::new("RTX sea"),
+        Mesh3d(mesh.clone()),
+        RaytracingMesh3d(mesh),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.02, 0.05, 0.06),
+            perceptual_roughness: 0.06,
+            reflectance: 0.35,
+            ..default()
+        })),
+        Transform::from_xyz(0., level, 0.),
+    ));
 }
 
 // ---------------------------------------------------------------------------

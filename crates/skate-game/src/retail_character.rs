@@ -426,6 +426,11 @@ fn update(
 }
 
 fn customiser_retail_enabled(retail: &CharacterParams) -> bool {
+    // RTX: the retail character shader ignores exposure, so forward-drawn hair
+    // would glow at night. Customiser materials keep Bevy's PBR lighting.
+    if crate::rtx::active() {
+        return false;
+    }
     // Warm stamps options.z = -1 for authored CAC rows; tint.w is also forced on.
     retail.options.z < 0. || retail.tint.w > 0.
 }

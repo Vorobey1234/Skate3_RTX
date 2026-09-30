@@ -34,6 +34,10 @@ tracing, built on Bevy Solari and NVIDIA DLSS:
   flat, smooth surfaces pick up glossy traced reflections.
 - **DLSS settings.** Escape > Graphics > DLSS: Auto, DLAA, Quality, Balanced,
   Performance, Ultra Performance, or Off (undenoised path tracing).
+- **Props and sea.** Each map's movable props (bins, benches, parked vehicles)
+  exported by setup are drawn and ray traced; they have no collision yet. The
+  converted maps contain no sea surface, so a glossy water plane is added at
+  sea level (`SKATE_SEA_LEVEL` overrides the default of -3 m).
 - **Characters** keep their authored PBR materials. Each frame they are skinned
   on the CPU into a ray-tracing proxy, so they cast traced shadows and appear in
   reflections.
