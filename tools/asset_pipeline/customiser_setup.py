@@ -175,7 +175,7 @@ def install(iso, base, game_exe, report, refresh=False):
             source = Path(temp)/'disc'
             extractor = core.dependency(base/'tools', 'extract-xiso', core.XISO_URL, core.XISO_SHA, report)
             with (Path(temp)/'extract.log').open('w') as log:
-                core.run([extractor, '-x', selected, '-d', source], log, report)
+                core.run([extractor, '-x', '-d', source, selected], log, report)
         else:
             source = source_directory(selected, require_core=not refresh)
         stage = core._install(iso, base, game_exe, report, game_root=source, refresh=refresh,
