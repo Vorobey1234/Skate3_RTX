@@ -13,16 +13,22 @@
 //! builds those proxies for the merged retail world, map lights, loose
 //! `StandardMaterial` meshes, and CPU-skinned characters.
 //!
+//! The sun and moon follow the menu's time of day. The sky is Bevy's physical
+//! atmosphere, lit by the same lights, and exposure follows the sun so nights
+//! stay readable. Output uses Bevy's filmic tonemapper: the retail tone curve
+//! was built for baked retail values, not physical light.
+//!
 //! GPUs without hardware ray queries keep the original raster renderer, as does
 //! `SKATE_RTX=0`.
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bevy::{
-    anti_alias::dlss::{Dlss, DlssProjectId, DlssRayReconstructionFeature, DlssRayReconstructionSupported},
+    anti_alias::dlss::{Dlss, DlssPerfQualityMode, DlssProjectId, DlssRayReconstructionFeature, DlssRayReconstructionSupported},
     asset::{LoadState, RenderAssetUsages},
-    camera::CameraMainTextureUsages,
+    camera::{CameraMainTextureUsages, Exposure},
+    core_pipeline::tonemapping::Tonemapping,
     mesh::{Indices, PrimitiveTopology, VertexAttributeValues, skinning::{SkinnedMesh, SkinnedMeshInverseBindposes}},
-    pbr::DefaultOpaqueRendererMethod,
+    pbr::{Atmosphere, DefaultOpaqueRendererMethod, ScatteringMedium},
     platform::collections::HashMap,
     prelude::*,
     render::{render_resource::TextureUsages, renderer::RenderDevice, view::Hdr},
@@ -46,6 +52,14 @@ const MAX_PROXY_TRIANGLES: usize = 65_535;
 /// See `rtx_world_gbuffer.wgsl`: unlit retail families become emitters.
 const EMISSIVE_NITS: f32 = 1000.0;
 
+/// Noon sun, as in the retail scene. Real sunlight is about ten times this;
+/// exposure is calibrated to the lower value, and the sky scales with it.
+const SUN_LUX: f32 = 11_000.0;
+const MOON_LUX: f32 = 30.0;
+/// Camera EV100 at full day and at night.
+const DAY_EV100: f32 = 9.7;
+const NIGHT_EV100: f32 = 4.5;
+
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// Whether this run renders with path tracing. Settled in `RtxPlugin::finish`,
@@ -66,6 +80,7 @@ impl Plugin for RtxPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(SolariPlugins)
             .init_resource::<ConvertedMeshes>()
+            .add_systems(Update, (day_cycle, apply_dlss_mode).run_if(|| active()))
             .add_systems(
                 PostUpdate,
                 (configure_cameras, disable_shadow_maps, proxy_standard_meshes, proxy_skinned_meshes, skin_proxies)
@@ -85,6 +100,9 @@ impl Plugin for RtxPlugin {
         ACTIVE.store(enabled, Ordering::Relaxed);
         if enabled {
             info!("SKATE_RTX: path tracing enabled (Solari ReSTIR DI/GI, DLSS Ray Reconstruction when available)");
+            if app.world().contains_resource::<DlssRayReconstructionSupported>() {
+                sky_after_ray_reconstruction(app);
+            }
         } else {
             // Solari's plugin switches every `Auto` material to deferred. Without
             // it, keep the forward renderer the retail materials were built for.
@@ -94,22 +112,56 @@ impl Plugin for RtxPlugin {
     }
 }
 
+/// DLSS Ray Reconstruction outputs black wherever the depth buffer is empty, so
+/// a sky drawn in the main pass never reaches the screen. Move the atmosphere's
+/// sky pass from inside the main pass to just after RR, before tonemapping.
+/// That pass also adds aerial perspective to geometry, which is fine after RR.
+fn sky_after_ray_reconstruction(app: &mut App) {
+    use bevy::core_pipeline::core_3d::graph::{Core3d, Node3d};
+    use bevy::pbr::AtmosphereNode;
+    use bevy::render::{RenderApp, render_graph::RenderGraph};
+    let render_app = app.sub_app_mut(RenderApp);
+    let mut graph = render_app.world_mut().resource_mut::<RenderGraph>();
+    let Some(core) = graph.get_sub_graph_mut(Core3d) else { return };
+    let moved = core.remove_node_edge(Node3d::MainOpaquePass, AtmosphereNode::RenderSky).is_ok()
+        && core.remove_node_edge(AtmosphereNode::RenderSky, Node3d::MainTransparentPass).is_ok();
+    if moved {
+        core.add_node_edge(Node3d::DlssRayReconstruction, AtmosphereNode::RenderSky);
+        core.add_node_edge(AtmosphereNode::RenderSky, Node3d::Tonemapping);
+    } else {
+        warn!("SKATE_RTX: could not reorder the atmosphere sky pass; the sky may render black under DLSS");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Camera and lights
 // ---------------------------------------------------------------------------
 
+/// Also re-run after a map change, which restores the retail tone state.
 fn configure_cameras(
     mut commands: Commands,
-    cameras: Query<Entity, (With<crate::camera::GameplayCamera>, Or<(Without<SolariLighting>, Without<Hdr>)>)>,
+    cameras: Query<
+        Entity,
+        (
+            With<crate::camera::GameplayCamera>,
+            Or<(Without<SolariLighting>, Without<Hdr>, With<crate::retail_render::RetailTone>)>,
+        ),
+    >,
     ray_reconstruction: Option<Res<DlssRayReconstructionSupported>>,
+    mut media: ResMut<Assets<ScatteringMedium>>,
+    mut medium: Local<Option<Handle<ScatteringMedium>>>,
 ) {
     for camera in &cameras {
+        let medium = medium.get_or_insert_with(|| media.add(ScatteringMedium::default())).clone();
         let mut camera = commands.entity(camera);
-        camera.insert((
+        camera.remove::<crate::retail_render::RetailTone>().insert((
             Hdr,
             SolariLighting::default(),
             Msaa::Off,
             CameraMainTextureUsages::default().with(TextureUsages::STORAGE_BINDING),
+            Atmosphere::earthlike(medium),
+            Exposure { ev100: DAY_EV100 },
+            Tonemapping::TonyMcMapface,
         ));
         if ray_reconstruction.is_some() {
             camera.insert(Dlss::<DlssRayReconstructionFeature> {
@@ -121,6 +173,114 @@ fn configure_cameras(
             warn_once!("SKATE_RTX: DLSS Ray Reconstruction unavailable; path-traced lighting is not denoised");
         }
     }
+}
+
+#[derive(Component)]
+struct Celestial {
+    moon: bool,
+}
+
+/// Moves the sun and moon along the menu's time of day, sets their colour and
+/// intensity, and matches camera exposure. Other directional lights (the retail
+/// scene sun and shadow helpers) are dimmed to zero, which Solari skips. The
+/// painted retail sky dome is hidden; the atmosphere replaces it.
+fn day_cycle(
+    mut commands: Commands,
+    time: Res<Time<Virtual>>,
+    menu: Option<ResMut<crate::graphics_menu::Menu>>,
+    mut celestial: Query<(&Celestial, &mut DirectionalLight, &mut Transform)>,
+    mut others: Query<&mut DirectionalLight, Without<Celestial>>,
+    mut cameras: Query<&mut Exposure, With<crate::camera::GameplayCamera>>,
+    mut domes: Query<&mut Visibility, With<MeshMaterial3d<crate::retail_sky::SkyMaterial>>>,
+) {
+    if celestial.is_empty() {
+        for moon in [false, true] {
+            commands.spawn((
+                Name::new(if moon { "RTX moon" } else { "RTX sun" }),
+                Celestial { moon },
+                DirectionalLight { shadows_enabled: false, illuminance: 0., ..default() },
+                Transform::default(),
+            ));
+        }
+        return;
+    }
+    let hour = menu.map_or(12., |mut menu| menu.advance_day(time.delta_secs()));
+    // 06:00 rises in +X, 12:00 is overhead (tilted toward +Z), 18:00 sets in -X.
+    let angle = hour / 24. * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+    let sun = Vec3::new(angle.cos(), angle.sin(), 0.25).normalize();
+    for (body, mut light, mut transform) in &mut celestial {
+        let direction = if body.moon { -sun } else { sun };
+        *transform = Transform::default().looking_to(-direction, Vec3::Y);
+        let height = direction.y.max(0.).powf(0.4);
+        if body.moon {
+            light.illuminance = MOON_LUX * height;
+            light.color = Color::srgb(0.7, 0.8, 1.0);
+        } else {
+            light.illuminance = SUN_LUX * height;
+            let warmth = smoothstep(0., 0.35, direction.y);
+            light.color = Color::srgb(1.0, 0.5 + 0.46 * warmth, 0.25 + 0.65 * warmth);
+        }
+    }
+    for mut light in &mut others {
+        if light.illuminance != 0. {
+            light.illuminance = 0.;
+        }
+    }
+    let day = smoothstep(-0.1, 0.15, sun.y);
+    for mut exposure in &mut cameras {
+        exposure.ev100 = NIGHT_EV100 + (DAY_EV100 - NIGHT_EV100) * day;
+    }
+    for mut visibility in &mut domes {
+        if *visibility != Visibility::Hidden {
+            *visibility = Visibility::Hidden;
+        }
+    }
+}
+
+/// Applies the Graphics menu's DLSS preset (`DLSS_MODES` order). "Off" removes
+/// Ray Reconstruction: the path-traced image is then shown undenoised.
+fn apply_dlss_mode(
+    mut commands: Commands,
+    menu: Option<Res<crate::graphics_menu::Menu>>,
+    mut cameras: Query<(Entity, Option<&mut Dlss<DlssRayReconstructionFeature>>), With<SolariLighting>>,
+    ray_reconstruction: Option<Res<DlssRayReconstructionSupported>>,
+) {
+    let Some(menu) = menu else { return };
+    let mode = match menu.dlss_mode() {
+        6 => {
+            for (camera, dlss) in &cameras {
+                if dlss.is_some() {
+                    commands.entity(camera).remove::<Dlss<DlssRayReconstructionFeature>>();
+                }
+            }
+            return;
+        }
+        1 => DlssPerfQualityMode::Dlaa,
+        2 => DlssPerfQualityMode::Quality,
+        3 => DlssPerfQualityMode::Balanced,
+        4 => DlssPerfQualityMode::Performance,
+        5 => DlssPerfQualityMode::UltraPerformance,
+        _ => DlssPerfQualityMode::Auto,
+    };
+    for (camera, dlss) in &mut cameras {
+        match dlss {
+            Some(mut dlss) if dlss.perf_quality_mode != mode => dlss.perf_quality_mode = mode,
+            Some(_) => {}
+            None if ray_reconstruction.is_some() => {
+                commands.entity(camera).insert(Dlss::<DlssRayReconstructionFeature> {
+                    perf_quality_mode: mode,
+                    reset: true,
+                    _phantom_data: default(),
+                });
+            }
+            None => {}
+        }
+    }
+}
+
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0., 1.);
+    t * t * (3. - 2. * t)
 }
 
 /// Solari traces shadow rays; cascaded shadow maps would only cost time.
@@ -176,7 +336,8 @@ pub(crate) fn spawn_world_proxies(
         let material = materials.add(StandardMaterial {
             base_color: Color::linear_rgb(albedo.x, albedo.y, albedo.z),
             emissive: if emissive { LinearRgba::rgb(albedo.x, albedo.y, albedo.z) * EMISSIVE_NITS } else { LinearRgba::BLACK },
-            perceptual_roughness: 0.9,
+            // Matches the G-buffer's derived roughness for untextured detail.
+            perceptual_roughness: 0.6,
             ..default()
         });
         for chunk in indices.chunks(MAX_PROXY_TRIANGLES * 3) {

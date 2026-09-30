@@ -78,7 +78,10 @@ impl Plugin for SolariLightingPlugin {
                 (
                     Node3d::EndPrepasses,
                     node::graph::SolariLightingNode,
-                    Node3d::EndMainPass,
+                    // Skate 3 RTX patch: light the G-buffer before the main pass,
+                    // so atmosphere aerial perspective and forward/transparent
+                    // draws composite over it instead of racing it.
+                    Node3d::StartMainPass,
                 ),
             );
     }

@@ -25,6 +25,15 @@ tracing, built on Bevy Solari and NVIDIA DLSS:
   leave the scene see a clear sky, added by a small patch in `vendor/bevy_solari`.
 - **DLSS Ray Reconstruction.** DLSS RR denoises the path-traced signal and
   upscales it to the output resolution in a single pass.
+- **Time of day.** Escape > Graphics > Day & night sets the hour and cycle
+  speed. A sun and moon follow it, the sky is Bevy's physical atmosphere (blue
+  noon, orange sunset, moonlit night), and exposure adapts. Output uses Bevy's
+  filmic tonemapper instead of the retail tone curve.
+- **Derived PBR.** Materials without authored normal or specular maps get bump
+  from the diffuse texture's luminance and roughness from its local detail, so
+  flat, smooth surfaces pick up glossy traced reflections.
+- **DLSS settings.** Escape > Graphics > DLSS: Auto, DLAA, Quality, Balanced,
+  Performance, Ultra Performance, or Off (undenoised path tracing).
 - **Characters** keep their authored PBR materials. Each frame they are skinned
   on the CPU into a ray-tracing proxy, so they cast traced shadows and appear in
   reflections.

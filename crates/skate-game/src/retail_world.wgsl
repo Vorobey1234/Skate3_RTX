@@ -314,5 +314,21 @@ fn fragment(i: VertexOutput) -> @location(0) vec4<f32> {
 #ifdef WORLD_ALPHA_CUTOFF
     if a.a < p.mode.z { discard; }
 #endif
-    return vec4<f32>(xe,alpha);
+    return vec4<f32>(xe*daylight(),alpha);
+}
+
+// Baked light is authored for the retail noon sun, 11000 lux at Bevy's default
+// exposure. When the RTX time of day dims the directional lights and raises
+// exposure, forward-drawn retail surfaces (foliage, fences, glass) follow the
+// same change as path-traced ones. The retail scene keeps its 11000 lux sun and
+// default exposure, so the raster renderer gets exactly 1.
+fn daylight() -> f32 {
+    let n = frame::lights.n_directional_lights;
+    if n == 0u { return 1.0; }
+    var lux = 0.0;
+    for (var id = 0u; id < n; id += 1u) {
+        lux += dot(frame::lights.directional_lights[id].color.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    }
+    let default_exposure = exp2(-9.7) / 1.2;
+    return max(lux / 11000.0, 0.002) * frame::view.exposure / default_exposure;
 }

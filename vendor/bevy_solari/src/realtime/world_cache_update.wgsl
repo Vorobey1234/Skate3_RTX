@@ -3,7 +3,7 @@
 #import bevy_render::view::View
 #import bevy_solari::presample_light_tiles::{ResolvedLightSamplePacked, unpack_resolved_light_sample}
 #import bevy_solari::sampling::{calculate_resolved_light_contribution, trace_light_visibility}
-#import bevy_solari::scene_bindings::{trace_ray, resolve_ray_hit_full, RAY_T_MIN, RAY_T_MAX, SKY_RADIANCE}
+#import bevy_solari::scene_bindings::{trace_ray, resolve_ray_hit_full, RAY_T_MIN, RAY_T_MAX, sky_radiance}
 #import bevy_solari::world_cache::{
     WORLD_CACHE_MAX_TEMPORAL_SAMPLES,
     WORLD_CACHE_DIRECT_LIGHT_SAMPLE_COUNT,
@@ -44,7 +44,7 @@ fn sample_radiance(@builtin(workgroup_id) workgroup_id: vec3<u32>, @builtin(glob
         } else if trace_ray(geometry_data.world_position, ray_direction, WORLD_CACHE_MAX_GI_RAY_DISTANCE, RAY_T_MAX, RAY_FLAG_TERMINATE_ON_FIRST_HIT).kind == RAY_QUERY_INTERSECTION_NONE {
             // Skate 3 RTX patch: a cosine-sampled ray that escapes the scene sees
             // the sky. The GI ray above stops at 50 m, so confirm the escape first.
-            new_radiance += SKY_RADIANCE;
+            new_radiance += sky_radiance();
         }
 #endif
 

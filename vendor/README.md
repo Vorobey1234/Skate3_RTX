@@ -101,9 +101,11 @@ private renderer implementation across engine versions.
 `bevy_solari` is the unmodified crates.io 0.18.1 source, with its original MIT
 and Apache licenses, except for these changes:
 
-- `src/scene/raytracing_scene_bindings.wgsl`: adds `SKY_RADIANCE`, a uniform
-  clear-sky radiance in cd/m^2. Upstream treats a ray that leaves the scene as
-  black, which leaves outdoor shadows lit only by bounce light.
+- `src/scene/raytracing_scene_bindings.wgsl`: adds `sky_radiance()`. Upstream
+  treats a ray that leaves the scene as black, which leaves outdoor shadows lit
+  only by bounce light. The sky is a fixed fraction of each directional light's
+  illuminance, blue when the light is high and warm near the horizon, plus a
+  small night floor, so it follows the game's time of day.
 - `src/realtime/restir_gi.wgsl`: an escaped diffuse GI ray becomes a sky sample
   placed `SKY_SAMPLE_DISTANCE` along the ray and facing back, so temporal and
   spatial reuse still validate it.
@@ -117,3 +119,17 @@ and Apache licenses, except for these changes:
   the compaction queue. A mesh changed before its BLAS finished compacting
   (skinned proxies change every frame) otherwise left two entries for one BLAS,
   and the second `prepare_compaction_async` call is a fatal wgpu error.
+- `src/realtime/mod.rs`: orders the lighting node before `StartMainPass`, so
+  the atmosphere and forward draws composite over lit pixels deterministically.
+- `src/realtime/resolve_dlss_rr_textures.wgsl`: sky pixels get unit diffuse
+  albedo, zero specular albedo and an up normal instead of zeros. Ray
+  Reconstruction still blacks out empty-depth pixels, so the game also moves the
+  sky pass after it (below).
+
+## Atmosphere after DLSS Ray Reconstruction (RTX fork)
+
+- `bevy_pbr/src/atmosphere/mod.rs`: re-exports `AtmosphereNode`, so the game can
+  move the sky render pass from inside the main pass to after DLSS RR.
+- `bevy_pbr/src/atmosphere/render_sky.wgsl`: reads depth by UV rather than by
+  pixel, because after DLSS upscaling the colour target is larger than the depth
+  buffer. At equal sizes this is the same texel.

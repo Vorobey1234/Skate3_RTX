@@ -35,6 +35,9 @@
 
 mod environment;
 mod node;
+// Skate 3 RTX patch: exported so the game can move the sky pass after DLSS Ray
+// Reconstruction (see `skate-game/src/rtx.rs`).
+pub use node::AtmosphereNode;
 pub mod resources;
 
 use bevy_app::{App, Plugin, Update};
@@ -82,7 +85,7 @@ use crate::{
 };
 
 use self::{
-    node::{AtmosphereLutsNode, AtmosphereNode, RenderSkyNode},
+    node::{AtmosphereLutsNode, RenderSkyNode},
     resources::{
         prepare_atmosphere_bind_groups, prepare_atmosphere_textures, AtmosphereBindGroupLayouts,
         AtmosphereLutPipelines, AtmosphereSampler,

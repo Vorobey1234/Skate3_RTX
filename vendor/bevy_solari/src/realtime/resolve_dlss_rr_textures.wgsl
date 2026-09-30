@@ -18,9 +18,12 @@ fn resolve_dlss_rr_textures(@builtin(global_invocation_id) global_id: vec3<u32>)
 
     let depth = textureLoad(depth_buffer, global_id.xy, 0);
     if depth == 0.0 {
-        textureStore(diffuse_albedo, pixel_id, vec4(0.0));
-        textureStore(specular_albedo, pixel_id, vec4(0.5));
-        textureStore(normal_roughness, pixel_id, vec4(0.0));
+        // Skate 3 RTX patch: RR demodulates colour by these albedos. Upstream
+        // wrote zero diffuse albedo here, which erased a sky drawn into the main
+        // pass (Bevy atmosphere). Unit diffuse and zero specular pass it through.
+        textureStore(diffuse_albedo, pixel_id, vec4(1.0));
+        textureStore(specular_albedo, pixel_id, vec4(0.0));
+        textureStore(normal_roughness, pixel_id, vec4(0.0, 1.0, 0.0, 1.0));
         textureStore(specular_motion_vectors, pixel_id, vec4(0.0));
         return;
     }

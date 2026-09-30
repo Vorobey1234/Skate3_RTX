@@ -88,10 +88,25 @@ const RAY_T_MAX = 100000.0f;
 
 // Skate 3 RTX patch: radiance (cd/m^2) of rays that escape the scene. Upstream
 // Solari 0.18 treats a miss as black, so outdoor shadows only received bounce
-// light. A uniform clear-sky value, tuned against the 11000 lux scene sun,
-// supplies the missing sky fill for diffuse GI, the world cache, and glossy paths.
-const SKY_RADIANCE: vec3<f32> = vec3<f32>(700.0, 850.0, 1100.0);
+// light. The sky here follows the directional lights: its brightness is a
+// fixed fraction of each light's illuminance, blue with the light high and
+// warm near the horizon, fading out once the light sets. At noon under the
+// game's 11000 lux sun this gives about 850 cd/m^2.
 const SKY_SAMPLE_DISTANCE: f32 = 10000.0;
+const SKY_PER_LUX: f32 = 0.077;
+const NIGHT_SKY_RADIANCE: vec3<f32> = vec3<f32>(0.02, 0.03, 0.06);
+
+fn sky_radiance() -> vec3<f32> {
+    var sky = NIGHT_SKY_RADIANCE;
+    for (var i = 0u; i < arrayLength(&directional_lights); i += 1u) {
+        let light = directional_lights[i];
+        let illuminance = dot(light.luminance * light.inverse_pdf, vec3(0.2126, 0.7152, 0.0722));
+        let elevation = light.direction_to_light.y;
+        let tint = mix(vec3(1.0, 0.6, 0.35), vec3(0.62, 0.78, 1.0), smoothstep(-0.05, 0.3, elevation));
+        sky += illuminance * SKY_PER_LUX * tint * smoothstep(-0.1, 0.05, elevation);
+    }
+    return sky;
+}
 
 const RAY_NO_CULL = 0xFFu;
 

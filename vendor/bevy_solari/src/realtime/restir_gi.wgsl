@@ -8,7 +8,7 @@
 #import bevy_solari::brdf::evaluate_diffuse_brdf
 #import bevy_solari::gbuffer_utils::{gpixel_resolve, pixel_dissimilar, permute_pixel}
 #import bevy_solari::sampling::{sample_random_light, trace_point_visibility, balance_heuristic}
-#import bevy_solari::scene_bindings::{trace_ray, resolve_ray_hit_full, RAY_T_MIN, RAY_T_MAX, SKY_RADIANCE, SKY_SAMPLE_DISTANCE}
+#import bevy_solari::scene_bindings::{trace_ray, resolve_ray_hit_full, RAY_T_MIN, RAY_T_MAX, sky_radiance, SKY_SAMPLE_DISTANCE}
 #import bevy_solari::world_cache::{query_world_cache, WORLD_CACHE_CELL_LIFETIME}
 
 @group(1) @binding(0) var view_output: texture_storage_2d<rgba16float, read_write>;
@@ -100,7 +100,7 @@ fn generate_initial_reservoir(world_position: vec3<f32>, world_normal: vec3<f32>
         reservoir.sample_point_world_position = world_position + ray_direction * SKY_SAMPLE_DISTANCE;
         reservoir.sample_point_world_normal = -ray_direction;
         reservoir.confidence_weight = 1.0;
-        reservoir.radiance = SKY_RADIANCE;
+        reservoir.radiance = sky_radiance();
         reservoir.unbiased_contribution_weight = uniform_hemisphere_inverse_pdf();
         return reservoir;
     }

@@ -6,7 +6,7 @@
 #import bevy_solari::brdf::{evaluate_brdf, evaluate_specular_brdf}
 #import bevy_solari::gbuffer_utils::gpixel_resolve
 #import bevy_solari::sampling::{sample_random_light, random_emissive_light_pdf, sample_ggx_vndf, ggx_vndf_pdf, power_heuristic}
-#import bevy_solari::scene_bindings::{trace_ray, resolve_ray_hit_full, ResolvedRayHitFull, RAY_T_MIN, RAY_T_MAX, SKY_RADIANCE}
+#import bevy_solari::scene_bindings::{trace_ray, resolve_ray_hit_full, ResolvedRayHitFull, RAY_T_MIN, RAY_T_MAX, sky_radiance}
 #import bevy_solari::world_cache::{query_world_cache, get_cell_size, WORLD_CACHE_CELL_LIFETIME}
 
 @group(1) @binding(0) var view_output: texture_storage_2d<rgba16float, read_write>;
@@ -91,7 +91,7 @@ fn trace_glossy_path(initial_ray_origin: vec3<f32>, initial_wi: vec3<f32>, initi
         // Trace ray
         let ray = trace_ray(ray_origin, wi, RAY_T_MIN, RAY_T_MAX, RAY_FLAG_NONE);
         // Skate 3 RTX patch: glossy paths that escape reflect the sky.
-        if ray.kind == RAY_QUERY_INTERSECTION_NONE { radiance += throughput * SKY_RADIANCE; break; }
+        if ray.kind == RAY_QUERY_INTERSECTION_NONE { radiance += throughput * sky_radiance(); break; }
         let ray_hit = resolve_ray_hit_full(ray);
 
         let TBN = calculate_tbn_mikktspace(ray_hit.world_normal, ray_hit.world_tangent);

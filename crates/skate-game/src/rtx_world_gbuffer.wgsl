@@ -25,6 +25,17 @@
 // brightness at Bevy's default exposure, and lets Solari use them as lights.
 const EMISSIVE_NITS: f32 = 1000.0;
 
+// Derived PBR for materials without authored normal or specular maps. The
+// diffuse texture's luminance serves as a height field: its slope tilts the
+// normal (BUMP_STRENGTH per unit of luminance change per texel) and raises
+// roughness from ROUGHNESS_BASE, so busy textures read rough and flat ones
+// catch glossy reflections. Neighbour taps reuse the base gradients, so the
+// bump fades with the mip level instead of aliasing at distance.
+const BUMP_STRENGTH: f32 = 3.0;
+const ROUGHNESS_BASE: f32 = 0.5;
+const ROUGHNESS_FROM_SLOPE: f32 = 4.0;
+const ROUGHNESS_MAX: f32 = 0.85;
+
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
     @location(0) position: vec3<f32>,
@@ -83,6 +94,9 @@ fn fragment(i: VertexOutput) -> FragmentOutput {
         diffuse_uv += fract(bindings::frame_state().clock.x * p.water[1].xy * vec2<f32>(1.0, -1.0));
     }
     let a = bindings::sample_diffuse(slot, diffuse_uv, g);
+    let texel = 1.0 / vec2<f32>(bindings::page_dimensions(bindings::slots[slot].diffuse));
+    let a_u = bindings::sample_diffuse(slot, diffuse_uv + vec2<f32>(texel.x, 0.0), g);
+    let a_v = bindings::sample_diffuse(slot, diffuse_uv + vec2<f32>(0.0, texel.y), g);
     var nm = vec3<f32>(0.5, 0.5, 1.0);
     var detail = vec2<f32>(0.5);
     var overlay = vec3<f32>(0.5);
@@ -125,9 +139,20 @@ fn fragment(i: VertexOutput) -> FragmentOutput {
         let raw = vec3<f32>(nm.xy * 2.0 + dxy * 2.0 - 2.0, nm.z * 2.0 - 1.0);
         wn = normalize(raw.x * kt + raw.y * kb + wn * max(raw.z, 0.05));
     }
+    let luma = vec3<f32>(0.2126, 0.7152, 0.0722);
+    let h = dot(a.rgb, luma);
+    // Texture rows are V-flipped against `kb`, which follows the authored V.
+    let slope = vec2<f32>(dot(a_u.rgb, luma) - h, -(dot(a_v.rgb, luma) - h));
+    let derived = (flags & 1u) == 0u && !(fam == 14u || fam >= 30u || fam == 11u || fam == 12u);
+    if derived {
+        wn = normalize(wn - BUMP_STRENGTH * (slope.x * kt + slope.y * kb));
+    }
 
     // Retail Blinn-Phong gloss -> GGX. Exponent n maps to alpha = sqrt(2/(n+2)).
     var perceptual_roughness = 0.9;
+    if derived {
+        perceptual_roughness = min(ROUGHNESS_BASE + ROUGHNESS_FROM_SLOPE * length(slope), ROUGHNESS_MAX);
+    }
     var reflectance = 0.5;
     if (flags & 16u) != 0u {
         let exponent = 10.0 + 290.0 * masks.y;

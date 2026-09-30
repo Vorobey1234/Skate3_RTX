@@ -30,6 +30,8 @@ const RESOLUTIONS: &[(u32, u32)] = &[
 const SCALES: &[u32] = &[25, 50, 67, 75, 85, 100];
 const DAY_SPEEDS: &[u32] = &[0, 1, 10, 30, 60, 120, 360, 720];
 const LIMITS: &[u32] = &[0, 30, 60, 90, 120, 144, 165, 240];
+/// DLSS quality presets, in the order the menu cycles them. See `rtx::dlss_mode`.
+pub(crate) const DLSS_MODES: &[&str] = &["Auto", "DLAA", "Quality", "Balanced", "Performance", "Ultra Performance", "Off"];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -41,6 +43,8 @@ struct GraphicsSettings {
     hour: f32,
     day_speed: u32,
     ambient_level: Option<u32>,
+    /// Index into `DLSS_MODES`.
+    dlss: u32,
 }
 impl Default for GraphicsSettings {
     fn default() -> Self {
@@ -52,12 +56,14 @@ impl Default for GraphicsSettings {
             hour: 12.,
             day_speed: 60,
             ambient_level: None,
+            dlss: 0,
         }
     }
 }
 impl GraphicsSettings {
     fn validated(mut self) -> Self {
         self.ambient_level = self.ambient_level.map(|level| level.min(100));
+        if self.dlss as usize >= DLSS_MODES.len() { self.dlss = 0; }
         self.hour = if self.hour.is_finite() { self.hour.rem_euclid(24.) } else { 12. };
         if !DAY_SPEEDS.contains(&self.day_speed) { self.day_speed = 60; }
         if !RESOLUTIONS.contains(&(self.width, self.height)) {
@@ -101,12 +107,16 @@ pub(crate) struct Menu {
     pending_travel: Option<(Option<PathBuf>, [[f32; 4]; 4])>,
 }
 impl Menu {
-    #[cfg(test)]
+    /// Advances the menu's time of day while the menu is closed. The RTX sun
+    /// follows it; the raster renderer keeps retail lighting authored.
     pub(crate) fn advance_day(&mut self, seconds: f32) -> f32 {
         if !self.open && self.settings.day_speed > 0 {
             self.settings.hour = (self.settings.hour + seconds * self.settings.day_speed as f32 / 3600.).rem_euclid(24.);
         }
         self.settings.hour
+    }
+    pub(crate) fn dlss_mode(&self) -> u32 {
+        self.settings.dlss
     }
     pub(crate) fn diagnostic_settings(&self) -> String {
         format!("{:?}", self.settings)
@@ -153,6 +163,7 @@ impl Menu {
             0 => (1000..1000 + self.maps.len()).collect(),
             1 if self.difficulty == Difficulty::Custom => std::iter::once(3).chain(300..337).chain([8,10]).collect(),
             1 => vec![3, 8, 10],
+            2 if crate::rtx::active() => vec![0, 1, 2, 16, 13],
             2 => vec![0, 1, 2, 13],
             4 => vec![7, 11, 14],
             i if i >= SECTIONS.len() => self.custom_sections.get(i-SECTIONS.len()).map_or(Vec::new(), |(_,entries)| (200..200+entries.len()).collect()),
@@ -423,7 +434,7 @@ pub(crate) fn interact(
         if keys.just_pressed(KeyCode::ArrowDown) || nav.pressed & 2 != 0 {
             menu.selected = visible[(index + 1) % rows];
         }
-        let adjustable = (menu.section == 1 && menu.difficulty == Difficulty::Custom && (300..335).contains(&menu.selected)) || (menu.daylight && menu.selected < 3) || (!menu.multiplayer && !menu.daylight && menu.selected < 4);
+        let adjustable = (menu.section == 1 && menu.difficulty == Difficulty::Custom && (300..335).contains(&menu.selected)) || (menu.daylight && menu.selected < 3) || (!menu.multiplayer && !menu.daylight && (menu.selected < 4 || menu.selected == 16));
         if adjustable && (keys.just_pressed(KeyCode::ArrowLeft) || nav.pressed & 4 != 0) {
             action = Some((menu.selected, -1));
         }
@@ -585,12 +596,13 @@ pub(crate) fn interact(
                     menu.map_detail = true;
                     menu.selected = 51;
                 },
-                13 => { menu.daylight = true; menu.selected = 0; menu.status = "Custom maps: change time, cycle speed and ambient light. Retail lighting stays authored.".into(); },
+                13 => { menu.daylight = true; menu.selected = 0; menu.status = if crate::rtx::active() { "Change time of day and cycle speed. The sun and sky follow it.".into() } else { "Custom maps: change time, cycle speed and ambient light. Retail lighting stays authored.".into() }; },
                 14 => mods.begin(),
+                16 => menu.settings.dlss = (menu.settings.dlss as i32 + direction).rem_euclid(DLSS_MODES.len() as i32) as u32,
                 _ => {}
             }
         }
-        if (row < 3 && !menu.multiplayer && !menu.daylight && !day_action) || (day_action && row < 3) {
+        if ((row < 3 || row == 16) && !menu.multiplayer && !menu.daylight && !day_action) || (day_action && row < 3) {
             let save = (|| -> Result<(), String> {
                 std::fs::create_dir_all(menu.path.parent().unwrap()).map_err(|e| e.to_string())?;
                 std::fs::write(
@@ -814,6 +826,7 @@ fn labels(
                 12 => "Teleport".into(),
                 13 => "Day & night".into(),
                 14 => "Mods".into(),
+                16 => format!("DLSS                  {}", DLSS_MODES[s.dlss as usize]),
                 _ => "Multiplayer".into(),
             }
         };
