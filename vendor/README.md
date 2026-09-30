@@ -115,6 +115,12 @@ and Apache licenses, except for these changes:
 - `src/scene/binder.rs`: skips directional lights with zero illuminance. Light
   selection is uniform over sources, so the game's receiver-only shadow light
   would otherwise waste half of the direct-light samples.
+- `src/scene/sampling.wgsl`: light selection gives directional lights half of
+  the candidates and emissive meshes the other half, instead of picking
+  uniformly over all sources. Retail maps have hundreds of emissive meshes
+  (lamps, signs), so uniform selection almost never picked the sun and direct
+  sunlight was noisy. `random_emissive_light_pdf` uses the same probabilities,
+  so MIS stays consistent.
 - `src/scene/blas.rs`: when a mesh is re-extracted, drops its old entries from
   the compaction queue. A mesh changed before its BLAS finished compacting
   (skinned proxies change every frame) otherwise left two entries for one BLAS,

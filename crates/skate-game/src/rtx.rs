@@ -308,6 +308,7 @@ fn disable_shadow_maps(mut lights: Query<&mut DirectionalLight, Changed<Directio
 /// Adds the ray-traced counterpart of the merged world: one proxy per source
 /// material, carrying its average albedo. Cutout and blended materials are left
 /// out because Solari has no alpha testing; their quads would cast solid shadows.
+/// Glass is left out too, so light reaches what is behind it.
 pub(crate) fn spawn_world_proxies(
     map: &SkateMap,
     table: &MaterialTable,
@@ -341,6 +342,11 @@ pub(crate) fn spawn_world_proxies(
             .and_then(|d| d.bindings.get("diffuse"))
             .map_or(material.textures[0], |b| b.texture);
         let albedo = *average.entry(texture).or_insert_with(|| average_albedo(map, texture));
+        // Glass is opaque in the G-buffer (see `retail_render`) but must not
+        // block light.
+        if definition.as_ref().is_some_and(|d| d.family == 13) {
+            continue;
+        }
         let emissive = definition.as_ref().is_some_and(|d| matches!(d.family, 11 | 12));
         let material = materials.add(StandardMaterial {
             base_color: Color::linear_rgb(albedo.x, albedo.y, albedo.z),

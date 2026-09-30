@@ -1014,6 +1014,16 @@ impl Request {
         // cutoff of -1, which no sampled alpha can fall under, so its class must
         // not compile the `discard`.
         let cutout = material.alpha_mode == 1;
+        // Under RTX, DLSS Ray Reconstruction rebuilds every pixel from the
+        // G-buffer and drops whatever a forward pass blended over it, so glass,
+        // decals and water edges vanished. Glass (family 13) is written to the
+        // G-buffer as a glossy surface instead, and other blended surfaces are
+        // alpha-tested there.
+        let (blended, cutout) = if crate::rtx::active() && blended {
+            (false, definition.family != 13)
+        } else {
+            (blended, cutout)
+        };
         let class = RenderClass::new(blended, cutout, definition.flags & 4 != 0);
 
         let mut water = [Vec4::ZERO; 4];

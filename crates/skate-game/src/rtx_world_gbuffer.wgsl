@@ -152,7 +152,7 @@ fn fragment(i: VertexOutput) -> FragmentOutput {
     let h = dot(a.rgb, luma);
     // Texture rows are V-flipped against `kb`, which follows the authored V.
     let slope = vec2<f32>(dot(a_u.rgb, luma) - h, -(dot(a_v.rgb, luma) - h)) * bump_fade;
-    let derived = (flags & 1u) == 0u && !(fam == 14u || fam >= 30u || fam == 11u || fam == 12u);
+    let derived = (flags & 1u) == 0u && !(fam == 14u || fam >= 30u || fam == 11u || fam == 12u || fam == 13u);
     if derived {
         wn = normalize(wn - BUMP_STRENGTH * (slope.x * kt + slope.y * kb));
     }
@@ -199,6 +199,13 @@ fn fragment(i: VertexOutput) -> FragmentOutput {
         reflectance = 0.35;
     } else if fam == 14u {
         perceptual_roughness = 0.08;
+    } else if fam == 13u {
+        // Glass: the retail tint (diffuse scaled by its alpha, as the retail
+        // shader lights it) under a smooth dielectric coat. It is opaque here;
+        // rays still pass through, since glass has no ray-tracing proxy.
+        albedo *= a.a;
+        perceptual_roughness = 0.05;
+        reflectance = 0.5;
     }
 
     var emissive = vec3<f32>(0.0);

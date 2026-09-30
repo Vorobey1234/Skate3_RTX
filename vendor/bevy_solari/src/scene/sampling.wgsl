@@ -97,14 +97,52 @@ fn sample_random_light(ray_origin: vec3<f32>, origin_world_normal: vec3<f32>, rn
     return light_contribution;
 }
 
-fn random_emissive_light_pdf(hit: ResolvedRayHitFull) -> f32 {
+// Skate3_RTX: light selection is split between directional and emissive
+// lights instead of uniform over all sources. With hundreds of emissive meshes
+// (lamps, signs) uniform selection picked the sun for about one candidate in
+// several hundred, so direct sunlight was noisy and flickered under motion.
+// The binder appends directional lights after every emissive mesh.
+const DIRECTIONAL_SELECTION_PROBABILITY: f32 = 0.5;
+
+fn directional_light_source_count() -> u32 {
     let light_count = arrayLength(&light_sources);
-    return 1.0 / (f32(light_count) * f32(hit.triangle_count) * hit.triangle_area);
+    var count = 0u;
+    while count < light_count && light_sources[light_count - 1u - count].kind == LIGHT_SOURCE_KIND_DIRECTIONAL {
+        count += 1u;
+    }
+    return count;
+}
+
+// Probability of selecting one particular light source of the given kind.
+fn light_source_selection_pdf(directional: bool) -> f32 {
+    let light_count = arrayLength(&light_sources);
+    let directional_count = directional_light_source_count();
+    let emissive_count = light_count - directional_count;
+    if directional_count == 0u || emissive_count == 0u {
+        return 1.0 / f32(light_count);
+    }
+    if directional {
+        return DIRECTIONAL_SELECTION_PROBABILITY / f32(directional_count);
+    }
+    return (1.0 - DIRECTIONAL_SELECTION_PROBABILITY) / f32(emissive_count);
+}
+
+fn random_emissive_light_pdf(hit: ResolvedRayHitFull) -> f32 {
+    return light_source_selection_pdf(false) / (f32(hit.triangle_count) * hit.triangle_area);
 }
 
 fn generate_random_light_sample(rng: ptr<function, u32>) -> GenerateRandomLightSampleResult {
     let light_count = arrayLength(&light_sources);
-    let light_id = rand_range_u(light_count, rng);
+    let directional_count = directional_light_source_count();
+    let emissive_count = light_count - directional_count;
+    var light_id = rand_range_u(light_count, rng);
+    if directional_count != 0u && emissive_count != 0u {
+        if rand_f(rng) < DIRECTIONAL_SELECTION_PROBABILITY {
+            light_id = emissive_count + rand_range_u(directional_count, rng);
+        } else {
+            light_id = rand_range_u(emissive_count, rng);
+        }
+    }
 
     let light_source = light_sources[light_id];
 
@@ -118,7 +156,7 @@ fn generate_random_light_sample(rng: ptr<function, u32>) -> GenerateRandomLightS
     let light_sample = LightSample((light_id << 16u) | triangle_id, seed);
 
     var resolved_light_sample = resolve_light_sample(light_sample, light_source);
-    resolved_light_sample.inverse_pdf *= f32(light_count);
+    resolved_light_sample.inverse_pdf /= light_source_selection_pdf(light_source.kind == LIGHT_SOURCE_KIND_DIRECTIONAL);
 
     return GenerateRandomLightSampleResult(light_sample, resolved_light_sample);
 }
