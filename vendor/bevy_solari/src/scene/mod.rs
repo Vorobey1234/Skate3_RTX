@@ -5,6 +5,7 @@ mod types;
 
 use bevy_shader::load_shader_library;
 pub use binder::RaytracingSceneBindings;
+pub use blas::mark_alpha_tested;
 pub use types::RaytracingMesh3d;
 
 use crate::SolariPlugins;

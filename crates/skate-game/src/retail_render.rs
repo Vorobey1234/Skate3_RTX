@@ -540,6 +540,19 @@ impl Definition {
             .filter(|v| v.is_finite())
     }
 
+    /// The family the RTX G-buffer shades a shader with when the raster port
+    /// cannot. The G-buffer needs no lightmap or tuning table: glowing retail
+    /// shaders (signs, traffic lights, lit adverts) become emitters, and water
+    /// keeps its family, whose smooth dark surface needs no tuned constants.
+    pub(crate) fn rtx_family(&self) -> Option<u32> {
+        match self.shader.as_str() {
+            "incandescent.transparent" | "trafficlight.one" | "trafficlight.two" => Some(12),
+            "advertisement.default" => Some(11),
+            _ if matches!(self.family, 30 | 31 | 33) => Some(self.family),
+            _ => None,
+        }
+    }
+
     pub(crate) fn supported(&self, tuning: &MaterialTuning) -> bool {
         (1..=13).contains(&self.family)
             || match self.family {
@@ -795,7 +808,11 @@ impl MaterialTable {
                 .as_deref()
                 .and_then(Definition::parse);
             let mut definition = definition.unwrap_or_else(Definition::portable);
-            if !definition.supported(tuning) {
+            if !definition.supported(tuning)
+                && let Some(family) = definition.rtx_family().filter(|_| crate::rtx::active())
+            {
+                definition.family = family;
+            } else if !definition.supported(tuning) {
                 // A hole is worse than approximate shading, and there is no
                 // second world material path to fall back to (RFC 1 D8), so an
                 // unsupported family renders as plain diffuse plus lightmap.

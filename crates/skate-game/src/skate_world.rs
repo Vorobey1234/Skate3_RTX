@@ -134,7 +134,7 @@ pub(crate) fn spawn(
         }
     }
 
-    crate::rtx::spawn_world_proxies(map, &table, commands, meshes, standard);
+    crate::rtx::spawn_world_proxies(map, &table, commands, meshes, images, standard);
     spawn_lights(map, commands, meshes, standard);
     eprintln!(
         "SKATE_RENDER_READY draws={} triangles={} slabs={} materials={} \

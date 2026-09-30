@@ -121,6 +121,12 @@ and Apache licenses, except for these changes:
   (lamps, signs), so uniform selection almost never picked the sun and direct
   sunlight was noisy. `random_emissive_light_pdf` uses the same probabilities,
   so MIS stays consistent.
+- `src/scene/blas.rs` and `src/scene/raytracing_scene_bindings.wgsl`:
+  alpha-tested geometry. `mark_alpha_tested` records meshes whose BLAS is built
+  without the opaque flag; `trace_ray` loops over their candidate hits and
+  confirms those where the base colour texture's alpha is at least 0.5. Other
+  geometry stays opaque and never reaches the test. The game uses this for
+  foliage and fences, which previously cast no shadows at all.
 - `src/scene/blas.rs`: when a mesh is re-extracted, drops its old entries from
   the compaction queue. A mesh changed before its BLAS finished compacting
   (skinned proxies change every frame) otherwise left two entries for one BLAS,

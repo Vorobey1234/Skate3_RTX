@@ -45,6 +45,8 @@ struct GraphicsSettings {
     ambient_level: Option<u32>,
     /// Index into `DLSS_MODES`.
     dlss: u32,
+    /// RTX: foliage and fences cast ray-traced shadows (alpha-tested rays).
+    foliage_shadows: bool,
 }
 impl Default for GraphicsSettings {
     fn default() -> Self {
@@ -57,6 +59,7 @@ impl Default for GraphicsSettings {
             day_speed: 60,
             ambient_level: None,
             dlss: 0,
+            foliage_shadows: true,
         }
     }
 }
@@ -118,6 +121,9 @@ impl Menu {
     pub(crate) fn dlss_mode(&self) -> u32 {
         self.settings.dlss
     }
+    pub(crate) fn foliage_shadows(&self) -> bool {
+        self.settings.foliage_shadows
+    }
     pub(crate) fn diagnostic_settings(&self) -> String {
         format!("{:?}", self.settings)
     }
@@ -163,7 +169,7 @@ impl Menu {
             0 => (1000..1000 + self.maps.len()).collect(),
             1 if self.difficulty == Difficulty::Custom => std::iter::once(3).chain(300..337).chain([8,10]).collect(),
             1 => vec![3, 8, 10],
-            2 if crate::rtx::active() => vec![0, 1, 2, 16, 13],
+            2 if crate::rtx::active() => vec![0, 1, 2, 16, 17, 13],
             2 => vec![0, 1, 2, 13],
             4 => vec![7, 11, 14],
             i if i >= SECTIONS.len() => self.custom_sections.get(i-SECTIONS.len()).map_or(Vec::new(), |(_,entries)| (200..200+entries.len()).collect()),
@@ -299,7 +305,7 @@ fn setup(
                 body.spawn((Text::new(""),MenuSubtitle,TextFont {font_size:16.,..default()},TextColor(Color::srgb(0.65,0.72,0.72))));
                 body.spawn((Node {height:px(3),width:px(64),margin:UiRect::bottom(px(10)),..default()},BackgroundColor(Color::srgb(0.78,0.96,0.3))));
                 body.spawn((MenuScroll,ScrollPosition::default(),Node {flex_grow:1.,min_height:px(0),overflow:Overflow::scroll_y(),flex_direction:FlexDirection::Column,row_gap:px(8),..default()})).with_children(|list| {
-                    for i in (0..4).chain(300..337).chain(4..10).chain(11..17).chain(20..27).chain([10]).chain(200..264).chain([50,51]).chain(1000..1000+maps.len()).chain(1_000_000..1_000_000+destinations.len()) {
+                    for i in (0..4).chain(300..337).chain(4..10).chain(11..18).chain(20..27).chain([10]).chain(200..264).chain([50,51]).chain(1000..1000+maps.len()).chain(1_000_000..1_000_000+destinations.len()) {
                         list.spawn((Button,MenuRow(i),Node {flex_direction:if (300..335).contains(&i) {FlexDirection::Column} else {FlexDirection::Row},width:percent(100),min_height:px(56),flex_shrink:0.,padding:UiRect::axes(px(18),px(12)),align_items:AlignItems::Center,border_radius:BorderRadius::all(px(4)),..default()},BackgroundColor(Color::srgb(0.075,0.09,0.095))))
                             .with_children(|row| {
                                 row.spawn((MenuLabel(i),Text::new(""),TextFont {font_size:18.,..default()},TextColor(Color::WHITE)));
@@ -434,7 +440,7 @@ pub(crate) fn interact(
         if keys.just_pressed(KeyCode::ArrowDown) || nav.pressed & 2 != 0 {
             menu.selected = visible[(index + 1) % rows];
         }
-        let adjustable = (menu.section == 1 && menu.difficulty == Difficulty::Custom && (300..335).contains(&menu.selected)) || (menu.daylight && menu.selected < 3) || (!menu.multiplayer && !menu.daylight && (menu.selected < 4 || menu.selected == 16));
+        let adjustable = (menu.section == 1 && menu.difficulty == Difficulty::Custom && (300..335).contains(&menu.selected)) || (menu.daylight && menu.selected < 3) || (!menu.multiplayer && !menu.daylight && (menu.selected < 4 || menu.selected == 16 || menu.selected == 17));
         if adjustable && (keys.just_pressed(KeyCode::ArrowLeft) || nav.pressed & 4 != 0) {
             action = Some((menu.selected, -1));
         }
@@ -599,10 +605,11 @@ pub(crate) fn interact(
                 13 => { menu.daylight = true; menu.selected = 0; menu.status = if crate::rtx::active() { "Change time of day and cycle speed. The sun and sky follow it.".into() } else { "Custom maps: change time, cycle speed and ambient light. Retail lighting stays authored.".into() }; },
                 14 => mods.begin(),
                 16 => menu.settings.dlss = (menu.settings.dlss as i32 + direction).rem_euclid(DLSS_MODES.len() as i32) as u32,
+                17 => menu.settings.foliage_shadows = !menu.settings.foliage_shadows,
                 _ => {}
             }
         }
-        if ((row < 3 || row == 16) && !menu.multiplayer && !menu.daylight && !day_action) || (day_action && row < 3) {
+        if ((row < 3 || row == 16 || row == 17) && !menu.multiplayer && !menu.daylight && !day_action) || (day_action && row < 3) {
             let save = (|| -> Result<(), String> {
                 std::fs::create_dir_all(menu.path.parent().unwrap()).map_err(|e| e.to_string())?;
                 std::fs::write(
@@ -827,6 +834,7 @@ fn labels(
                 13 => "Day & night".into(),
                 14 => "Mods".into(),
                 16 => format!("DLSS                  {}", DLSS_MODES[s.dlss as usize]),
+                17 => format!("Foliage shadows       {}", if s.foliage_shadows { "On" } else { "Off" }),
                 _ => "Multiplayer".into(),
             }
         };

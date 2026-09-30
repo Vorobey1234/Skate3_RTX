@@ -8,8 +8,8 @@
 //! lightmaps and shadow maps no longer light opaque geometry.
 //!
 //! Solari traces a separate scene: `RaytracingMesh3d` entities with a
-//! `StandardMaterial`. Rays only need geometry, an average albedo and emission
-//! at secondary hits (the primary hit comes from the G-buffer), so this module
+//! `StandardMaterial`. Rays only need geometry, a small copy of the albedo and
+//! emission at secondary hits (the primary hit comes from the G-buffer), so this module
 //! builds those proxies for the merged retail world, map lights, loose
 //! `StandardMaterial` meshes, and CPU-skinned characters.
 //!
@@ -82,7 +82,7 @@ impl Plugin for RtxPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(SolariPlugins)
             .init_resource::<ConvertedMeshes>()
-            .add_systems(Update, (day_cycle, apply_dlss_mode).run_if(|| active()))
+            .add_systems(Update, (day_cycle, apply_dlss_mode, apply_foliage_shadows).run_if(|| active()))
             .add_systems(
                 PostUpdate,
                 (configure_cameras, disable_shadow_maps, proxy_standard_meshes, proxy_skinned_meshes, skin_proxies)
@@ -287,6 +287,32 @@ fn apply_dlss_mode(
     }
 }
 
+/// An alpha-tested world proxy; see `spawn_world_proxies`. Keeps its mesh so
+/// the Graphics menu's foliage shadows toggle can take it out of the
+/// ray-traced scene and put it back.
+#[derive(Component)]
+struct AlphaTestedProxy(Handle<Mesh>);
+
+/// Alpha-tested rays cost roughly a quarter of the frame on dense maps, so the
+/// Graphics menu can turn them off. Removing `SyncToRenderWorld` along with the
+/// mesh despawns the render-world copy that Solari reads.
+fn apply_foliage_shadows(
+    mut commands: Commands,
+    menu: Option<Res<crate::graphics_menu::Menu>>,
+    proxies: Query<(Entity, &AlphaTestedProxy, Has<RaytracingMesh3d>)>,
+) {
+    let enabled = menu.is_none_or(|menu| menu.foliage_shadows());
+    for (entity, proxy, traced) in &proxies {
+        if enabled && !traced {
+            commands.entity(entity).insert(RaytracingMesh3d(proxy.0.clone()));
+        } else if !enabled && traced {
+            commands
+                .entity(entity)
+                .remove::<(RaytracingMesh3d, bevy::render::sync_world::SyncToRenderWorld)>();
+        }
+    }
+}
+
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0., 1.);
     t * t * (3. - 2. * t)
@@ -305,71 +331,222 @@ fn disable_shadow_maps(mut lights: Query<&mut DirectionalLight, Changed<Directio
 // Retail world proxies
 // ---------------------------------------------------------------------------
 
-/// Adds the ray-traced counterpart of the merged world: one proxy per source
-/// material, carrying its average albedo. Cutout and blended materials are left
-/// out because Solari has no alpha testing; their quads would cast solid shadows.
-/// Glass is left out too, so light reaches what is behind it.
+/// Longest side of a proxy texture. Solari samples mip 0 only, so full-size
+/// textures alias into noise at secondary hits; a box-filtered copy this small
+/// is pre-blurred instead, and cheap enough to keep for every material.
+const PROXY_TEXTURE_SIZE: u32 = 128;
+/// Edge of the cubic cells that split each texture's triangles into separate
+/// proxies. Proxies spanning a whole map (one per texture, or one per retail
+/// material) have overlapping bounds that the top-level acceleration structure
+/// cannot separate: on DownTown at 1440p, 128 m cells ran at 58 FPS against
+/// 30 for per-texture and 37 for per-material proxies.
+const PROXY_CELL: f32 = 128.0;
+/// Proxy textures per map, well under Solari's 5000-entry texture array so
+/// props, characters and loose meshes still fit. Past it, proxies of opaque
+/// materials fall back to their average colour.
+const MAX_PROXY_TEXTURES: usize = 1800;
+/// Body colour of water relative to its bed texture; see the G-buffer shader.
+const WATER_ALBEDO: f32 = 0.08;
+
+/// Adds the ray-traced counterpart of the merged world: one proxy per diffuse
+/// texture and `PROXY_CELL`, carrying a small copy of that texture. Cutout materials
+/// (foliage, fences) get alpha-tested proxies, so they cast shadows through
+/// their holes. Glass and other blended surfaces are left out.
 pub(crate) fn spawn_world_proxies(
     map: &SkateMap,
     table: &MaterialTable,
     commands: &mut SceneCommands,
     meshes: &mut impl AssetSink<Mesh>,
+    images: &mut impl AssetSink<Image>,
     materials: &mut impl AssetSink<StandardMaterial>,
 ) {
     if !active() {
         return;
     }
-    let mut triangles: HashMap<usize, Vec<u32>> = HashMap::default();
+    // Materials that trace alike share a proxy within each cell: same diffuse
+    // texture, same kind, same alpha testing.
+    let mut kinds: HashMap<usize, Option<ProxyKey>> = HashMap::default();
+    let mut groups: HashMap<(ProxyKey, IVec3), Vec<u32>> = HashMap::default();
     for tri in map.geometry.indices.chunks_exact(3) {
         let Some(source) = (map.geometry.vertices[tri[0] as usize].material as usize).checked_sub(1) else {
             continue;
         };
-        let Some(entry) = table.entry(source) else { continue };
-        if matches!(entry.class, RenderClass::Opaque | RenderClass::OpaqueTwoSided) {
-            triangles.entry(source).or_default().extend_from_slice(tri);
+        let key = *kinds.entry(source).or_insert_with(|| proxy_key(map, table, source));
+        if let Some(key) = key {
+            let centroid = tri.iter().map(|&i| Vec3::from_array(map.geometry.vertices[i as usize].position)).sum::<Vec3>() / 3.;
+            let cell = (centroid / PROXY_CELL).floor().as_ivec3();
+            groups.entry((key, cell)).or_default().extend_from_slice(tri);
         }
     }
-    let mut average: HashMap<u32, Vec3> = HashMap::default();
-    let mut proxies = 0usize;
-    for (source, indices) in triangles {
-        let material = &map.materials[source];
-        let definition = material
-            .retail_definition
-            .as_deref()
-            .and_then(crate::retail_render::Definition::parse);
-        let texture = definition
-            .as_ref()
-            .and_then(|d| d.bindings.get("diffuse"))
-            .map_or(material.textures[0], |b| b.texture);
-        let albedo = *average.entry(texture).or_insert_with(|| average_albedo(map, texture));
-        // Glass is opaque in the G-buffer (see `retail_render`) but must not
-        // block light.
-        if definition.as_ref().is_some_and(|d| d.family == 13) {
+    let mut images_by_texture: HashMap<u32, Option<Handle<Image>>> = HashMap::default();
+    let mut materials_by_key: HashMap<ProxyKey, Option<Handle<StandardMaterial>>> = HashMap::default();
+    let (mut proxies, mut alpha_tested) = (0usize, 0usize);
+    for ((key, _), indices) in groups {
+        let Some(material) = materials_by_key
+            .entry(key)
+            .or_insert_with(|| {
+                let budget = images_by_texture.len() < MAX_PROXY_TEXTURES;
+                let image = images_by_texture
+                    .entry(key.texture)
+                    .or_insert_with(|| budget.then(|| proxy_texture(map, key.texture)).flatten().map(|image| images.add(image)))
+                    .clone();
+                proxy_material(map, key, image, materials)
+            })
+            .clone()
+        else {
             continue;
-        }
-        let emissive = definition.as_ref().is_some_and(|d| matches!(d.family, 11 | 12));
-        let material = materials.add(StandardMaterial {
-            base_color: Color::linear_rgb(albedo.x, albedo.y, albedo.z),
-            emissive: if emissive { LinearRgba::rgb(albedo.x, albedo.y, albedo.z) * EMISSIVE_NITS } else { LinearRgba::BLACK },
-            // Matches the G-buffer's derived roughness for untextured detail.
-            perceptual_roughness: 0.6,
-            ..default()
-        });
+        };
         for chunk in indices.chunks(MAX_PROXY_TRIANGLES * 3) {
-            let mesh = proxy_mesh(chunk, |i| {
+            let mesh = meshes.add(proxy_mesh(chunk, |i| {
                 let v = &map.geometry.vertices[i as usize];
                 (v.position, v.normal, v.uv)
-            });
-            commands.spawn((
-                Name::new(format!("rt proxy material {source}")),
-                RaytracingMesh3d(meshes.add(mesh)),
+            }));
+            let proxy = (
+                Name::new(format!("rt proxy texture {}", key.texture)),
+                RaytracingMesh3d(mesh.clone()),
                 MeshMaterial3d(material.clone()),
                 Transform::default(),
-            ));
+            );
+            if key.cutout {
+                bevy::solari::scene::mark_alpha_tested(mesh.id());
+                commands.spawn((proxy, AlphaTestedProxy(mesh)));
+                alpha_tested += 1;
+            } else {
+                commands.spawn(proxy);
+            }
             proxies += 1;
         }
     }
-    info!("SKATE_RTX: {proxies} world ray-tracing proxies");
+    info!(
+        "SKATE_RTX: {proxies} world ray-tracing proxies ({alpha_tested} alpha-tested), {} textures",
+        images_by_texture.values().flatten().count()
+    );
+}
+
+/// The ray-traced material for a proxy key, or `None` for a cutout whose
+/// texture is missing: without it the cutout would be a solid slab in every
+/// shadow.
+fn proxy_material(
+    map: &SkateMap,
+    key: ProxyKey,
+    image: Option<Handle<Image>>,
+    materials: &mut impl AssetSink<StandardMaterial>,
+) -> Option<Handle<StandardMaterial>> {
+    if key.cutout && image.is_none() {
+        return None;
+    }
+    let tint = if key.kind == ProxyKind::Water { WATER_ALBEDO } else { 1. };
+    let base = match image {
+        Some(_) => Vec3::splat(tint),
+        None => average_albedo(map, key.texture) * tint,
+    };
+    let emissive = key.kind == ProxyKind::Emissive;
+    Some(materials.add(StandardMaterial {
+        base_color: Color::linear_rgb(base.x, base.y, base.z),
+        base_color_texture: image.clone(),
+        emissive: if emissive { LinearRgba::rgb(base.x, base.y, base.z) * EMISSIVE_NITS } else { LinearRgba::BLACK },
+        emissive_texture: if emissive { image } else { None },
+        // Matches the G-buffer's derived roughness for untextured detail.
+        perceptual_roughness: if key.kind == ProxyKind::Water { 0.04 } else { 0.6 },
+        ..default()
+    }))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum ProxyKind {
+    Surface,
+    Emissive,
+    Water,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct ProxyKey {
+    texture: u32,
+    kind: ProxyKind,
+    cutout: bool,
+}
+
+/// How a retail material is traced, or `None` when it is not.
+fn proxy_key(map: &SkateMap, table: &MaterialTable, source: usize) -> Option<ProxyKey> {
+    let entry = table.entry(source)?;
+    let material = &map.materials[source];
+    let definition = material
+        .retail_definition
+        .as_deref()
+        .and_then(crate::retail_render::Definition::parse);
+    let family = definition.as_ref().map_or(1, |d| d.rtx_family().unwrap_or(d.family));
+    // Glass is drawn in the G-buffer but must not block light.
+    if family == 13 {
+        return None;
+    }
+    let cutout = !matches!(entry.class, RenderClass::Opaque | RenderClass::OpaqueTwoSided);
+    // Only authored cutouts (foliage, fences) are traced. Blended surfaces,
+    // alpha-tested in the G-buffer under RTX, are mostly decals lying on other
+    // geometry: tracing them would cost an alpha test on every ray that reaches
+    // the surface beneath for no visible shadow.
+    if cutout && material.alpha_mode != 1 {
+        return None;
+    }
+    let texture = definition
+        .as_ref()
+        .and_then(|d| d.bindings.get("diffuse"))
+        .map_or(material.textures[0], |b| b.texture);
+    let kind = match family {
+        11 | 12 => ProxyKind::Emissive,
+        30.. => ProxyKind::Water,
+        _ => ProxyKind::Surface,
+    };
+    Some(ProxyKey { texture, kind, cutout })
+}
+
+/// A box-filtered copy of a map texture, at most `PROXY_TEXTURE_SIZE` on a
+/// side. Colour is averaged as squared texels, which is how the retail shader
+/// linearises albedo, and stored as sRGB; alpha is averaged linearly, so it
+/// becomes the coverage the ray tracer's alpha test compares against.
+fn proxy_texture(map: &SkateMap, texture: u32) -> Option<Image> {
+    use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let texture = (texture as usize).checked_sub(1).and_then(|i| map.textures.get(i))?;
+    let (w, h) = (texture.width as usize, texture.height as usize);
+    if w == 0 || h == 0 || texture.rgba.len() < w * h * 4 {
+        return None;
+    }
+    let factor = (w.max(h) as u32).div_ceil(PROXY_TEXTURE_SIZE).max(1) as usize;
+    let (ow, oh) = (w.div_ceil(factor), h.div_ceil(factor));
+    let mut data = Vec::with_capacity(ow * oh * 4);
+    for oy in 0..oh {
+        for ox in 0..ow {
+            let (mut sum, mut n) = ([0f32; 4], 0f32);
+            for y in oy * factor..((oy + 1) * factor).min(h) {
+                for x in ox * factor..((ox + 1) * factor).min(w) {
+                    let t = &texture.rgba[(y * w + x) * 4..][..4];
+                    for c in 0..3 {
+                        let v = t[c] as f32 / 255.;
+                        sum[c] += v * v;
+                    }
+                    sum[3] += t[3] as f32 / 255.;
+                    n += 1.;
+                }
+            }
+            let srgb = Srgba::from(LinearRgba::rgb(sum[0] / n, sum[1] / n, sum[2] / n)).to_u8_array();
+            data.extend_from_slice(&[srgb[0], srgb[1], srgb[2], (sum[3] / n * 255.).round() as u8]);
+        }
+    }
+    let mut image = Image::new(
+        Extent3d { width: ow as u32, height: oh as u32, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        ..default()
+    });
+    Some(image)
 }
 
 /// Mean of the squared stored texel, which is how the retail shader linearises

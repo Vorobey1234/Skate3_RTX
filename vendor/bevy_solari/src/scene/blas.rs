@@ -16,6 +16,29 @@ use bevy_render::{
     renderer::{RenderDevice, RenderQueue},
 };
 
+/// Skate 3 RTX patch: meshes whose BLAS is built without the opaque flag, so
+/// `trace_ray` alpha-tests their candidate hits against the base colour
+/// texture. Everything else stays opaque and never reaches that test.
+static ALPHA_TESTED_MESHES: bevy_platform::sync::RwLock<Option<bevy_platform::collections::HashSet<AssetId<Mesh>>>> =
+    bevy_platform::sync::RwLock::new(None);
+
+/// Marks a mesh as alpha-tested; call before it is first extracted.
+pub fn mark_alpha_tested(mesh: AssetId<Mesh>) {
+    ALPHA_TESTED_MESHES
+        .write()
+        .unwrap()
+        .get_or_insert_with(Default::default)
+        .insert(mesh);
+}
+
+fn is_alpha_tested(mesh: &AssetId<Mesh>) -> bool {
+    ALPHA_TESTED_MESHES
+        .read()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|set| set.contains(mesh))
+}
+
 /// After compacting this many vertices worth of meshes per frame, no further BLAS will be compacted.
 /// Lower this number to distribute the work across more frames.
 const MAX_COMPACTION_VERTICES_PER_FRAME: u32 = 400_000;
@@ -163,7 +186,11 @@ fn allocate_blas(
         vertex_count: vertex_slice.range.len() as u32,
         index_format: Some(IndexFormat::Uint32),
         index_count: Some(index_slice.range.len() as u32),
-        flags: AccelerationStructureGeometryFlags::OPAQUE,
+        flags: if is_alpha_tested(asset_id) {
+            AccelerationStructureGeometryFlags::empty()
+        } else {
+            AccelerationStructureGeometryFlags::OPAQUE
+        },
     };
 
     let blas = render_device.wgpu_device().create_blas(

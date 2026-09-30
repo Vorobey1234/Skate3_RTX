@@ -114,8 +114,31 @@ fn trace_ray(ray_origin: vec3<f32>, ray_direction: vec3<f32>, ray_t_min: f32, ra
     let ray = RayDesc(ray_flag, RAY_NO_CULL, ray_t_min, ray_t_max, ray_origin, ray_direction);
     var rq: ray_query;
     rayQueryInitialize(&rq, tlas, ray);
-    rayQueryProceed(&rq);
+    // Skate 3 RTX patch: only alpha-tested (non-opaque) geometry yields
+    // candidates; accept those where the base colour texture is covered.
+    while rayQueryProceed(&rq) {
+        let candidate = rayQueryGetCandidateIntersection(&rq);
+        if candidate.kind == RAY_QUERY_INTERSECTION_TRIANGLE && alpha_test_passes(candidate) {
+            rayQueryConfirmIntersection(&rq);
+        }
+    }
     return rayQueryGetCommittedIntersection(&rq);
+}
+
+// Coverage threshold for alpha-tested geometry. The game gives these meshes
+// box-filtered textures, whose alpha is the coverage of each block.
+const ALPHA_TEST_CUTOFF: f32 = 0.5;
+
+fn alpha_test_passes(hit: RayIntersection) -> bool {
+    let material = materials[material_ids[hit.instance_index]];
+    if material.base_color_texture_id == TEXTURE_MAP_NONE {
+        return true;
+    }
+    let vertices = load_vertices(geometry_ids[hit.instance_index], hit.primitive_index);
+    let barycentrics = vec3(1.0 - hit.barycentrics.x - hit.barycentrics.y, hit.barycentrics);
+    let uv = mat3x2(vertices[0].uv, vertices[1].uv, vertices[2].uv) * barycentrics;
+    let id = material.base_color_texture_id;
+    return textureSampleLevel(textures[id], samplers[id], uv, 0.0).a >= ALPHA_TEST_CUTOFF;
 }
 
 fn sample_texture(id: u32, uv: vec2<f32>) -> vec3<f32> {
