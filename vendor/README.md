@@ -113,3 +113,7 @@ and Apache licenses, except for these changes:
 - `src/scene/binder.rs`: skips directional lights with zero illuminance. Light
   selection is uniform over sources, so the game's receiver-only shadow light
   would otherwise waste half of the direct-light samples.
+- `src/scene/blas.rs`: when a mesh is re-extracted, drops its old entries from
+  the compaction queue. A mesh changed before its BLAS finished compacting
+  (skinned proxies change every frame) otherwise left two entries for one BLAS,
+  and the second `prepare_compaction_async` call is a fatal wgpu error.
