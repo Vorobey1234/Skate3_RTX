@@ -90,8 +90,8 @@ const RAY_T_MAX = 100000.0f;
 // Solari 0.18 treats a miss as black, so outdoor shadows only received bounce
 // light. A uniform clear-sky value, tuned against the 11000 lux scene sun,
 // supplies the missing sky fill for diffuse GI, the world cache, and glossy paths.
-const SKY_RADIANCE = vec3(700.0, 850.0, 1100.0);
-const SKY_SAMPLE_DISTANCE = 10000.0f;
+const SKY_RADIANCE: vec3<f32> = vec3<f32>(700.0, 850.0, 1100.0);
+const SKY_SAMPLE_DISTANCE: f32 = 10000.0;
 
 const RAY_NO_CULL = 0xFFu;
 

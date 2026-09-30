@@ -52,6 +52,17 @@ pub fn prepare_raytracing_blas(
         return;
     }
 
+    // Skate 3 RTX patch: a mesh re-extracted before its previous BLAS finished
+    // compacting (skinned proxies change every frame) would leave two queue
+    // entries for the one BLAS stored under its ID. Both then call
+    // `prepare_compaction_async` and wgpu rejects the second call. Keep only the
+    // entry for the BLAS built below.
+    let rebuilt: bevy_platform::collections::HashSet<AssetId<Mesh>> =
+        extracted_meshes.extracted.iter().map(|(id, _)| *id).collect();
+    blas_manager
+        .compaction_queue
+        .retain(|(id, _, _)| !rebuilt.contains(id));
+
     // Create new BLAS for added or changed meshes
     let blas_resources = extracted_meshes
         .extracted
