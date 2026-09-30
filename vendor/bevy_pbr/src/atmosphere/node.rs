@@ -193,7 +193,7 @@ impl ViewNode for RenderSkyNode {
             view_uniforms_offset,
             lights_uniforms_offset,
             render_sky_pipeline_id,
-            resolution_override,
+            _resolution_override,
         ): QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
@@ -216,7 +216,10 @@ impl ViewNode for RenderSkyNode {
         let pass_span = diagnostics.pass_span(&mut render_sky_pass, "render_sky");
 
         if let Some(viewport) =
-            Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution_override)
+            // Skate 3 RTX patch: the game runs this pass after DLSS upscaling,
+            // where the target is at output resolution, so the main-pass
+            // resolution override must not shrink the viewport.
+            Viewport::from_viewport_and_override(camera.viewport.as_ref(), None)
         {
             render_sky_pass.set_camera_viewport(&viewport);
         }

@@ -30,9 +30,12 @@ struct RenderSkyOutput {
 
 @fragment
 fn main(in: FullscreenVertexOutput) -> RenderSkyOutput {
-    // Skate 3 RTX patch: address depth by UV, not pixel. The game can run this
-    // pass after DLSS upscaling, where the target is larger than the depth.
-    let depth = textureLoad(depth_texture, vec2<i32>(in.uv * vec2<f32>(textureDimensions(depth_texture))), 0);
+    // Skate 3 RTX patch: address depth by UV within the main-pass viewport, not
+    // by pixel. The game runs this pass after DLSS upscaling: the target is then
+    // at output resolution while depth fills only the render-resolution corner
+    // of its (output-sized) texture. Without upscaling both mappings agree.
+    let depth_pixel = view.main_pass_viewport.xy + in.uv * view.main_pass_viewport.zw;
+    let depth = textureLoad(depth_texture, vec2<i32>(depth_pixel), 0);
 
     let ray_dir_ws = uv_to_ray_direction(in.uv);
     let world_pos = get_view_position();

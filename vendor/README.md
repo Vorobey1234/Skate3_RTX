@@ -130,6 +130,11 @@ and Apache licenses, except for these changes:
 
 - `bevy_pbr/src/atmosphere/mod.rs`: re-exports `AtmosphereNode`, so the game can
   move the sky render pass from inside the main pass to after DLSS RR.
-- `bevy_pbr/src/atmosphere/render_sky.wgsl`: reads depth by UV rather than by
-  pixel, because after DLSS upscaling the colour target is larger than the depth
-  buffer. At equal sizes this is the same texel.
+- `bevy_pbr/src/atmosphere/render_sky.wgsl`: reads depth at
+  `main_pass_viewport.xy + uv * main_pass_viewport.zw` rather than at the pixel
+  position. After DLSS upscaling the colour target is at output resolution,
+  while depth fills only the render-resolution corner of its output-sized
+  texture. Without upscaling both mappings give the same texel.
+- `bevy_pbr/src/atmosphere/node.rs`: the sky pass no longer applies
+  `MainPassResolutionOverride` to its viewport, since after DLSS it draws the
+  full output-resolution target.
